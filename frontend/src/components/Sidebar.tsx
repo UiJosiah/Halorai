@@ -71,7 +71,7 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
               Advance Editing
             </li>
           </ul>
-          <button className="w-full bg-[hsl(0,0%,0%)] text-[hsl(0,0%,50%)] border-none rounded-full py-2.5 text-xs font-normal cursor-pointer transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99]">
+          <button className="bg-[hsl(0,0%,0%)] text-[hsl(0,0%,50%)] border-none rounded-full py-2.5 min-w-[85%] text-xs font-normal cursor-pointer transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99]">
             Coming soon
           </button>
         </div>

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import HaloRAI from "./pages/HaloRAI";
 import CreateDesign from "./pages/CreateDesign";
+import CreateDesignStep2 from "./pages/CreateDesignStep2";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -18,6 +19,7 @@ const App = () => (
         <Routes>
           <Route path="/" element={<HaloRAI />} />
           <Route path="/create-design" element={<CreateDesign />} />
+          <Route path="/create-design/step-2" element={<CreateDesignStep2 />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

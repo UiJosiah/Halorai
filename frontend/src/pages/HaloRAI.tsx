@@ -43,7 +43,7 @@ const HaloRAI = () => {
             <img
               src="/Halorai Dev/Icons/Create Design button.png"
               alt="Create Design"
-              className="h-16 xs:h-12 md:h-14 xl:h-18 w-full xs:w-auto object-contain object-left transition-opacity duration-150 ease-out hover:opacity-90"
+              className="h-12 xs:h-12 md:h-14 xl:h-18 w-full xs:w-auto object-contain object-left transition-opacity duration-150 ease-out hover:opacity-90"
             />
           </button>
         </div>
