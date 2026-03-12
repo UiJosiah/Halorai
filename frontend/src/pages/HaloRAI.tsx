@@ -20,41 +20,41 @@ const HaloRAI = () => {
     <AppLayout>
       {/* Hero Section */}
       <section
-        className="xs:rounded-3xl px-4 md:px-6 xl:px-12 pt-7 pb-6 md:pt-7 md:pb-8 xl:pt-7 xl:pb-10 flex flex-col md:flex-row items-center justify-between mb-6 xs:mb-8 md:mb-16 min-h-0 xs:min-h-[200px] md:min-h-[260px] xl:min-h-[300px] relative overflow-hidden"
+        className="mt-3 xs:mt-0 xs:rounded-3xl pl-5 md:px-6 xl:px-12 py-6 xs:py-0 md:py-1 xl:py-2 flex flex-col md:flex-row items-start xs:items-center justify-between mb-6 xs:mb-8 md:mb-16 min-h-0 xs:min-h-[180px] md:min-h-[220px] xl:min-h-[260px] relative overflow-hidden"
         style={{
           backgroundImage: "url('/Halorai Dev/Halorai Background.png')",
           backgroundSize: "cover",
           backgroundPosition: "center",
         }}
       >
-        {/* On mobile (<500px): flyer image first, then text below */}
-        {/* On desktop: text left, flyer right */}
-        
-        {/* Flyer - shown first on mobile (order-1), second on desktop */}
-        <div className="relative z-10 w-full xs:w-full md:w-[280px] lg:w-[320px] xl:w-[450px] order-1 xs:order-2 md:order-2 flex items-center justify-center mb-4 xs:mb-0">
-          <img
-            src="/Halorai Dev/Images/Group 1000006715.png"
-            alt="Event flyer 1"
-            className="w-[85%] xs:w-full h-full object-contain md:object-right"
-          />
-        </div>
-
-        {/* Text content - shown second on mobile (order-2), first on desktop */}
-        <div className="flex-1 max-w-full md:max-w-[350px] xl:max-w-[420px] relative z-10 order-2 xs:order-1 md:order-1">
+        {/* Text content - shown first on mobile, first on desktop */}
+        <div className="flex-1 max-w-full md:max-w-[400px] xl:max-w-[450px] relative z-10 order-1 md:order-1 text-left">
           {/* Welcome text - only on mobile */}
-          <p className="text-sm text-[hsl(0,0%,55%)] font-light mb-1 block xs:hidden">
+          <p className="text-lg text-[hsl(0,0%,55%)] font-light mb-1 block xs:hidden">
             Welcome back, <span className="text-[hsl(0,0%,30%)]">Johnny</span>
           </p>
-          <h1 className="text-[28px] leading-[1.15] xs:text-xl md:text-2xl xl:text-3xl font-medium text-[hsl(0,0%,10%)] xs:leading-tight mt-0 md:mt-2 xl:mt-4 mb-5 xs:mb-8 md:mb-24 xl:mb-32 tracking-tight">
+          <h1 className="text-5xl leading-[1.05] xs:text-3xl md:text-3xl xl:text-3xl font-semibold xs:font-semibold text-[hsl(0,0%,10%)] xs:leading-tight mt-0 md:mt-2 xl:mt-2 mb-5 xs:mb-8 md:mb-24 xl:mb-32 tracking-tight pr-4">
             Design Your Next Event Today
           </h1>
-          <button className="border-none bg-transparent p-0 cursor-pointer w-full xs:w-auto" onClick={() => navigate("/create-design")}>
+          <button
+            className="border-none bg-transparent p-0 cursor-pointer w-[80%] xs:w-auto transition-transform duration-150 ease-out hover:scale-[1.02] active:scale-[0.99] mb-6 xs:mb-0"
+            onClick={() => navigate("/create-design")}
+          >
             <img
               src="/Halorai Dev/Icons/Create Design button.png"
               alt="Create Design"
-              className="h-12 xs:h-10 md:h-12 xl:h-16 w-[70%] xs:w-auto object-contain object-left"
+              className="h-16 xs:h-12 md:h-14 xl:h-18 w-full xs:w-auto object-contain object-left transition-opacity duration-150 ease-out hover:opacity-90"
             />
           </button>
+        </div>
+
+        {/* Flyer - shown second on mobile, second on desktop. Cropped right on mobile */}
+        <div className="relative z-10 w-full xs:w-full md:w-[280px] lg:w-[320px] xl:w-[450px] order-2 md:order-2 flex items-center justify-center overflow-hidden">
+          <img
+            src="/Halorai Dev/Images/Group 1000006715.png"
+            alt="Event flyer 1"
+            className="w-full xs:w-full h-full object-contain md:object-right translate-x-[16%] xs:translate-x-0"
+          />
         </div>
       </section>
 

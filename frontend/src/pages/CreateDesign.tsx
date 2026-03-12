@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 
@@ -25,7 +25,7 @@ const CreateDesign = () => {
     <AppLayout>
       {/* Hero Section - same as HaloRAI but no button, image cropped at bottom */}
       <section
-        className="xs:rounded-3xl px-4 md:px-6 xl:px-12 pt-1 md:pt-2 xl:pt-3 pb-0 flex flex-col md:flex-row items-center md:items-start justify-between mb-6 xs:mb-8 min-h-0 relative overflow-hidden"
+        className="mt-3 xs:mt-0 xs:rounded-3xl px-4 md:px-6 xl:px-12 pt-1 md:pt-2 xl:pt-3 pb-0 flex flex-col md:flex-row items-start xs:items-center md:items-start justify-between mb-6 xs:mb-8 min-h-[180px] max-[450px]:min-h-[220px] md:min-h-0 relative overflow-hidden"
         style={{
           backgroundImage: "url('/Halorai Dev/Halorai Background.png')",
           backgroundSize: "cover",
@@ -33,17 +33,17 @@ const CreateDesign = () => {
         }}
       >
         {/* Flyer image - cropped at bottom */}
-        <div className="relative z-10 w-full xs:w-full md:w-[280px] lg:w-[320px] xl:w-[450px] order-1 xs:order-2 md:order-2 flex items-end justify-center mb-0 overflow-hidden h-[80px] md:h-[110px] xl:h-[130px]">
+        <div className="relative z-10 w-full xs:w-full md:w-[280px] lg:w-[320px] xl:w-[450px] order-2 md:order-2 flex items-end justify-center mb-0 overflow-hidden h-[120px] max-[450px]:h-[145px] md:h-[90px] xl:h-[105px]">
           <img
             src="/Halorai Dev/Images/Group 1000006715.png"
             alt="Event flyers"
-            className="w-[85%] xs:w-full h-full object-cover object-top scale-[1.08]"
+            className="w-full h-full object-cover object-top scale-[1.02] max-[450px]:scale-[1.06] md:scale-[1.08] xl:scale-[1.1]"
           />
         </div>
 
         {/* Text content */}
-        <div className="flex-1 max-w-full md:max-w-[350px] xl:max-w-[420px] relative z-10 order-2 xs:order-1 md:order-1">
-          <h1 className="text-[28px] leading-[1.15] xs:text-xl md:text-2xl xl:text-3xl font-medium text-[hsl(0,0%,10%)] xs:leading-tight mt-6 md:mt-8 xl:mt-10 tracking-tight">
+        <div className="flex-1 max-w-full md:max-w-[350px] xl:max-w-[420px] relative z-10 order-1 md:order-1 text-left md:self-center">
+          <h1 className="text-3xl leading-[1.15] font-semibold text-[hsl(0,0%,10%)] mt-0 md:mt-2 tracking-tight md:text-3xl md:leading-[1.05] md:font-semibold">
             Create Design
           </h1>
         </div>
@@ -51,15 +51,12 @@ const CreateDesign = () => {
 
       {/* Stepper */}
       <div className="px-4 xs:px-0 mt-6 mb-6">
-        <div className="flex items-center">
+        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr] items-center">
+          {/* Leading line before step 1 */}
+          <div className={`h-[2px] ${currentStep >= 1 ? "bg-[hsl(330,100%,85%)]" : "bg-[hsl(0,0%,88%)]"}`} />
+
           {steps.map((step, index) => (
-            <div key={step} className="flex items-center flex-1 last:flex-none">
-              {/* Line BEFORE the number */}
-              <div
-                className={`flex-1 h-[2px] ${
-                  step <= currentStep ? "bg-[hsl(330,100%,85%)]" : "bg-[hsl(0,0%,88%)]"
-                }`}
-              />
+            <Fragment key={step}>
               {/* Number circle */}
               <div
                 className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 shrink-0 ${
@@ -70,12 +67,23 @@ const CreateDesign = () => {
               >
                 {step}
               </div>
-            </div>
+
+              {/* Line after the circle (step 5 included) */}
+              <div
+                className={`h-[2px] ${
+                  index === steps.length - 1
+                    ? "bg-[hsl(0,0%,88%)]"
+                    : step < currentStep
+                      ? "bg-[hsl(330,100%,85%)]"
+                      : "bg-[hsl(0,0%,88%)]"
+                }`}
+              />
+            </Fragment>
           ))}
         </div>
         <div className="flex items-center justify-between mt-2">
-          <span className="text-xs font-medium text-[hsl(0,0%,10%)] bg-[hsl(0,0%,96%)] px-3 py-1.5 rounded-md">Start</span>
-          <span className="text-xs font-medium text-[hsl(0,0%,10%)] bg-[hsl(0,0%,96%)] px-3 py-1.5 rounded-md">Complete</span>
+          <span className="text-sm font-medium text-[hsl(0,0%,10%)] bg-[hsl(0,0%,96%)] px-3 py-2 rounded-full">Start</span>
+          <span className="text-sm font-medium text-[hsl(0,0%,10%)] bg-[hsl(0,0%,96%)] px-3 py-2 rounded-full">Complete</span>
         </div>
       </div>
 
@@ -95,7 +103,7 @@ const CreateDesign = () => {
                 placeholder="e.g House of Fire Ministry"
                 value={formData.churchName}
                 onChange={(e) => handleChange("churchName", e.target.value)}
-                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3 text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
+                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
               />
             </div>
 
@@ -108,7 +116,7 @@ const CreateDesign = () => {
                   placeholder="eg. 20th-30th March, 2026"
                   value={formData.date}
                   onChange={(e) => handleChange("date", e.target.value)}
-                  className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3 text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
+                  className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -118,7 +126,7 @@ const CreateDesign = () => {
                   placeholder="eg. 5pm Daily"
                   value={formData.time}
                   onChange={(e) => handleChange("time", e.target.value)}
-                  className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3 text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
+                  className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
                 />
               </div>
             </div>
@@ -131,7 +139,7 @@ const CreateDesign = () => {
                 placeholder="e.g 7 Nights of Glory"
                 value={formData.eventName}
                 onChange={(e) => handleChange("eventName", e.target.value)}
-                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3 text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
+                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
               />
             </div>
 
@@ -143,7 +151,7 @@ const CreateDesign = () => {
                 placeholder="eg. HOF Auditorium, Mainland, Lagos"
                 value={formData.venue}
                 onChange={(e) => handleChange("venue", e.target.value)}
-                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3 text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
+                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
               />
             </div>
 
@@ -155,7 +163,7 @@ const CreateDesign = () => {
                 placeholder="e.g Flames of Fire"
                 value={formData.theme}
                 onChange={(e) => handleChange("theme", e.target.value)}
-                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3 text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
+                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
               />
             </div>
 
@@ -167,7 +175,7 @@ const CreateDesign = () => {
                 placeholder="Enter any other instructions or Info you want to add"
                 value={formData.otherInfo}
                 onChange={(e) => handleChange("otherInfo", e.target.value)}
-                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3 text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
+                className="border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(0,0%,50%)] transition-colors bg-white"
               />
             </div>
           </div>

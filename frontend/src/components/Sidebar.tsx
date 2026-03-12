@@ -53,10 +53,10 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
 
         {/* Upgrade Card */}
         <div className="mt-8 md:mt-10 lg:mt-12 xl:mt-14 bg-[hsl(0,0%,100%)] border border-[hsl(0,0%,100%)] rounded-2xl p-5">
-          <div className="w-12 h-12 bg-[hsl(16,100%,93%)] rounded-full flex items-center justify-center mb-3.5">
+          <div className="w-10 h-10 bg-[hsl(16,100%,93%)] rounded-full flex items-center justify-center mb-3.5">
             <img src="/Halorai Dev/Icons/material-symbols_crown-rounded.svg" alt="Crown" className="w-7 h-7" />
           </div>
-          <h3 className="text-xl font-normal text-[hsl(0,0%,20%)] mb-3">Upgrade to Pro</h3>
+          <h3 className="text-lg font-normal text-[hsl(0,0%,20%)] mb-3">Upgrade to Pro</h3>
           <ul className="list-none p-0 m-0 mb-4 flex flex-col gap-2">
             <li className="flex items-center gap-2 text-xs font-normal text-[hsl(0,0%,40%)]">
               <img src="/Halorai Dev/Icons/pepicons-pencil_checkmark-filled.svg" alt="Check" className="w-3.5 h-3.5" />
@@ -71,7 +71,7 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
               Advance Editing
             </li>
           </ul>
-          <button className="w-full bg-[hsl(0,0%,0%)] text-[hsl(0,0%,50%)] border-none rounded-full py-2.5 text-xs font-normal cursor-pointer">
+          <button className="w-full bg-[hsl(0,0%,0%)] text-[hsl(0,0%,50%)] border-none rounded-full py-2.5 text-xs font-normal cursor-pointer transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99]">
             Coming soon
           </button>
         </div>
