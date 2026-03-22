@@ -159,3 +159,48 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+/* Ministers scroll indicator */
+.ministers-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+
+.ministers-scroll::-webkit-scrollbar-track {
+  background: hsl(0, 0%, 92%);
+  border-radius: 10px;
+}
+
+.ministers-scroll::-webkit-scrollbar-thumb {
+  background: hsl(0, 0%, 75%);
+  border-radius: 10px;
+}
+
+.ministers-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(0, 0%, 75%) hsl(0, 0%, 92%);
+}
+
+/* Details scroll (Step 4 preview) */
+.details-scroll {
+  max-height: 140px;
+  overflow-y: auto;
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: hsl(0, 0%, 80%) transparent;
+}
+
+.details-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.details-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.details-scroll::-webkit-scrollbar-thumb {
+  background: hsl(0, 0%, 80%);
+  border-radius: 10px;
+}
+
+.details-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(0, 0%, 70%);
+}

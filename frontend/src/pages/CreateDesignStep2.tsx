@@ -108,13 +108,13 @@ const CreateDesignStep2 = () => {
                   <div className="flex items-center gap-2">
                     <div className="relative">
                       <img src="/Halorai Dev/Icons/blue cross.svg" alt="Logo 1" className="w-9 h-9 rounded-full object-cover" />
-                      <button className="absolute -top-1 -right-1 w-3 h-3 bg-[hsl(15,100%,55%)] rounded-full flex items-center justify-center">
+                      <button className="absolute -top-0 -right-0 w-3 h-3 bg-[hsl(15,100%,55%)] rounded-full flex items-center justify-center">
                         <img src="/Halorai Dev/Icons/cancel.svg" alt="Remove" className="w-2 h-2 brightness-0 invert" />
                       </button>
                     </div>
                     <div className="relative">
                       <img src="/Halorai Dev//Icons/black cross.svg" alt="Logo 2" className="w-9 h-9 rounded-full object-cover" />
-                      <button className="absolute -top-1 -right-1 w-3 h-3 bg-[hsl(15,100%,55%)] rounded-full flex items-center justify-center">
+                      <button className="absolute -top-0 -right-0 w-3 h-3 bg-[hsl(15,100%,55%)] rounded-full flex items-center justify-center">
                         <img src="/Halorai Dev/Icons/cancel.svg" alt="Remove" className="w-2 h-2 brightness-0 invert" />
                       </button>
                     </div>
@@ -146,8 +146,7 @@ const CreateDesignStep2 = () => {
               <h3 className="text-sm font-semibold text-[hsl(0,0%,10%)] mb-1">Add Ministers Name</h3>
               <p className="text-xs text-[hsl(0,0%,55%)] mb-4">Enter Name and Title (Title is Optional)</p>
               <div
-                className="flex flex-col gap-3 md:h-[220px] lg:h-[210px] xl:h-[200px] md:overflow-y-scroll md:pr-6 md:border-r-2 md:border-[hsl(0,0%,90%)]"
-                style={{ scrollbarGutter: "stable" }}
+                className="flex flex-col gap-3 md:h-[220px] lg:h-[210px] xl:h-[200px] md:overflow-y-auto md:pr-6 ministers-scroll"
               >
                 {ministers.map((minister) => (
                   <div key={minister.slotId} className="flex items-center gap-3">
@@ -194,7 +193,7 @@ const CreateDesignStep2 = () => {
                   Go back
                 </button>
                 <button
-                  onClick={() => {}}
+                  onClick={() => navigate("/create-design/step-3")}
                   className="flex items-center gap-2 bg-[hsl(0,0%,10%)] text-white border-none rounded-full px-4 py-3 text-xs font-medium cursor-pointer hover:bg-[hsl(0,0%,20%)] transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99]"
                 >
                   Continue
