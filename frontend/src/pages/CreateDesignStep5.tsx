@@ -5,6 +5,7 @@ import StepperProgress from "@/components/StepperProgress";
 
 const CreateDesignStep5 = () => {
   const [message, setMessage] = useState("");
+  const hasMessage = message.trim().length > 0;
 
   return (
     <AppLayout>
@@ -38,8 +39,8 @@ const CreateDesignStep5 = () => {
             </div>
 
             {/* Right Column - Chat/Edit input + Buttons */}
-            <div className="flex flex-col justify-between">
-              <div className="border border-[hsl(330,100%,85%)] rounded-2xl p-4 flex flex-col h-full min-h-[260px]">
+            <div className="flex flex-col items-center h-full md:justify-center">
+              <div className="w-full max-w-[420px] bg-[hsl(0,0%,97%)] border border-[hsl(0,0%,95%)] rounded-2xl p-4 flex flex-col min-h-[240px]">
                 <textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
@@ -47,27 +48,30 @@ const CreateDesignStep5 = () => {
                   className="flex-1 w-full resize-none border-none outline-none text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,65%)] bg-transparent"
                 />
                 <div className="flex justify-end mt-2">
-                  <button className="w-10 h-10 rounded-full bg-[hsl(0,0%,75%)] flex items-center justify-center cursor-pointer hover:bg-[hsl(0,0%,60%)] transition-colors border-none">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5 12L3 21L21 12L3 3L5 12ZM5 12H13" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
+                  <button
+                    className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors border-none ${
+                      hasMessage
+                        ? "bg-[hsl(25,100%,35%)] hover:bg-[hsl(25,100%,30%)]"
+                        : "bg-[hsl(0,0%,60%)] hover:bg-[hsl(0,0%,55%)]"
+                    }`}
+                  >
+                    <img src="/Halorai Dev/Icons/send Vector.svg" alt="Send" className="w-4 h-4" />
                   </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 mt-4">
-                <button className="flex items-center gap-2 border border-[hsl(0,0%,80%)] rounded-full px-6 py-3 text-sm font-medium text-[hsl(0,0%,10%)] bg-white cursor-pointer hover:border-[hsl(0,0%,60%)] transition-colors">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 20H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M16.5 3.50023C16.8978 3.1024 17.4374 2.87891 18 2.87891C18.2786 2.87891 18.5544 2.93378 18.8118 3.04038C19.0692 3.14699 19.303 3.30317 19.5 3.50023C19.697 3.69729 19.8532 3.93106 19.9598 4.18849C20.0665 4.44591 20.1213 4.72169 20.1213 5.00023C20.1213 5.27877 20.0665 5.55455 19.9598 5.81197C19.8532 6.0694 19.697 6.30317 19.5 6.50023L7 19.0002L3 20.0002L4 16.0002L16.5 3.50023Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+              <div className="w-full max-w-[420px] flex items-center gap-4 mt-4">
+                <button className="flex-1 flex items-center justify-center gap-2 bg-[hsl(0,0%,97%)] border border-[hsl(0,0%,95%)] rounded-full px-6 py-3 text-sm font-regular text-[hsl(0,0%,10%)] cursor-pointer hover:border-[hsl(0,0%,60%)] transition-colors">
+                  <img src="/Halorai Dev/Icons/lucide_edit-3.svg" alt="Edit" className="w-4 h-4" />
                   Edit
                 </button>
-                <button className="flex items-center gap-2 bg-[hsl(0,0%,10%)] text-white border-none rounded-full px-6 py-3 text-sm font-medium cursor-pointer hover:bg-[hsl(0,0%,20%)] transition-colors">
+                <button className="flex-1 flex items-center justify-center gap-2 bg-[hsl(0,0%,10%)] text-white border-none rounded-full px-6 py-3 text-sm font-regular cursor-pointer hover:bg-[hsl(0,0%,20%)] transition-colors">
                   Download
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M9 18L15 12L9 6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                  <img
+                    src="/Halorai Dev/Icons/weui_arrow-outlined-forward.svg"
+                    alt="Forward"
+                    className="w-4 h-4 pl-1"
+                  />
                 </button>
               </div>
             </div>

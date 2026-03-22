@@ -27,7 +27,9 @@ const StepperProgress = ({ currentStep }: StepperProgressProps) => {
             <div
               className={`h-[2px] ${
                 index === steps.length - 1
-                  ? "bg-[hsl(0,0%,88%)]"
+                  ? currentStep >= steps.length
+                    ? "bg-[hsl(330,100%,85%)]"
+                    : "bg-[hsl(0,0%,88%)]"
                   : step < currentStep
                     ? "bg-[hsl(330,100%,85%)]"
                     : "bg-[hsl(0,0%,88%)]"
