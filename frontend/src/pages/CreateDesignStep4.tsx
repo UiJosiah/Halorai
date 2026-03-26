@@ -185,7 +185,7 @@ const CreateDesignStep4 = () => {
               </div>
               <button
                 aria-label="Create"
-                // onClick={() => navigate("/create-design/step-5")}
+                onClick={() => navigate("/create-design/step-5")}
                 className="border-none bg-transparent p-0 cursor-pointer transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99] shrink-0"
               >
                 <img src="/Halorai Dev/Icons/Create button.png" alt="Create" className="h-12 w-auto object-contain" />
