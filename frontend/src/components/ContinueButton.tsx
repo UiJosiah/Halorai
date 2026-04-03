@@ -1,14 +1,20 @@
 interface ContinueButtonProps {
   onClick?: () => void;
   label?: string;
+  disabled?: boolean;
 }
 
-const ContinueButton = ({ onClick, label = "Continue" }: ContinueButtonProps) => {
+const ContinueButton = ({ onClick, label = "Continue", disabled }: ContinueButtonProps) => {
   return (
     <div className="flex justify-end mt-8">
       <button
         onClick={onClick}
-        className="flex items-center gap-2 bg-[hsl(0,0%,10%)] text-white border-none rounded-full px-4 py-3 text-xs font-medium cursor-pointer hover:bg-[hsl(0,0%,20%)] transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99]"
+        disabled={disabled}
+        className={`flex items-center gap-2 border-none rounded-full px-4 py-3 text-xs font-medium transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99] ${
+          disabled
+            ? "bg-[hsl(0,0%,60%)] text-white cursor-not-allowed"
+            : "bg-[hsl(0,0%,10%)] text-white cursor-pointer hover:bg-[hsl(0,0%,20%)]"
+        }`}
       >
         {label}
         <img

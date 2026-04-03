@@ -10,6 +10,7 @@ import CreateDesignStep3 from "./pages/CreateDesignStep3";
 import CreateDesignStep4 from "./pages/CreateDesignStep4";
 import CreateDesignStep5 from "./pages/CreateDesignStep5";
 import NotFound from "./pages/NotFound";
+import { CreateDesignProvider } from "@/contexts/CreateDesignContext";
 
 const queryClient = new QueryClient();
 
@@ -18,18 +19,20 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<HaloRAI />} />
-          <Route path="/create-design" element={<CreateDesign />} />
-          <Route path="/create-design/step-2" element={<CreateDesignStep2 />} />
-          <Route path="/create-design/step-3" element={<CreateDesignStep3 />} />
-          <Route path="/create-design/step-4" element={<CreateDesignStep4 />} />
-          <Route path="/create-design/step-5" element={<CreateDesignStep5 />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
+      <CreateDesignProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<HaloRAI />} />
+            <Route path="/create-design" element={<CreateDesign />} />
+            <Route path="/create-design/step-2" element={<CreateDesignStep2 />} />
+            <Route path="/create-design/step-3" element={<CreateDesignStep3 />} />
+            <Route path="/create-design/step-4" element={<CreateDesignStep4 />} />
+            <Route path="/create-design/step-5" element={<CreateDesignStep5 />} />
+            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </CreateDesignProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

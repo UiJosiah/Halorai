@@ -1,0 +1,48 @@
+.arcLoader {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arcLoader__svg {
+  display: block;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.arcLoader__spin {
+  transform-origin: 134.5px 134.5px;
+  will-change: transform;
+}
+
+.arcLoader__spin--on {
+  animation: arcLoaderSpin var(--arcLoaderSpinDuration, 2.6s) linear infinite;
+}
+
+.arcLoader__label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+@keyframes arcLoaderSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arcLoader__spin,
+  .arcLoader__spin--on {
+    animation: none;
+  }
+}
+

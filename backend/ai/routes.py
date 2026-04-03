@@ -1,10 +1,13 @@
 import os
 import json
+import logging
+import time
+import re
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 
-from .gemini_client import generate_flyer_image_base64, generate_images_base64, generate_text, recreate_image_base64
-from .templates import pick_template_image
+from .ai_client import generate_flyer_image_base64, generate_images_base64, generate_text, recreate_image_base64
+from .templates import MAX_MINISTERS, pick_template_image
 
 
 ai_bp = Blueprint("ai", __name__)
@@ -14,9 +17,23 @@ DEFAULT_TEXT_MODEL = os.environ.get("AI_TEXT_MODEL") or "models/gemini-3.1-pro-p
 DEFAULT_IMAGE_MODEL = os.environ.get("AI_IMAGE_MODEL") or "models/gemini-3.1-flash-image-preview"
 DEFAULT_FLYER_MODEL = os.environ.get("AI_FLYER_MODEL") or DEFAULT_IMAGE_MODEL
 
+ai_logger = logging.getLogger("ai")
+
 
 def _json_error(message: str, status: int = 400):
   return jsonify({"error": message}), status
+
+
+def _preview_text(s: str, limit: int = 320) -> str:
+  s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
+  s = " ".join(s.split())  # collapse whitespace for single-line logs
+  if len(s) <= limit:
+    return s
+  return s[:limit] + "…"
+
+
+def _rid() -> str:
+  return str(getattr(g, "request_id", "") or "")
 
 
 def _guess_mime(filename: str) -> str:
@@ -30,18 +47,92 @@ def _guess_mime(filename: str) -> str:
   return "application/octet-stream"
 
 
+def _ai_exception_to_http(e: Exception) -> tuple[int, str]:
+  """
+  Convert bulky provider errors into a user-friendly message + HTTP status.
+  Full details are still logged server-side for debugging.
+  """
+  raw = str(e) or e.__class__.__name__
+  low = raw.lower()
+
+  # Quota / rate limit.
+  if (
+    "resource_exhausted" in low
+    or "exceeded your current quota" in low
+    or "rate limit" in low
+    or re.search(r"\b429\b", low)
+  ):
+    return 429, "AI limit reached right now. Please wait a bit and try again."
+
+  # Auth / billing / key issues.
+  if ("api key" in low and ("invalid" in low or "missing" in low)) or re.search(r"\b401\b|\b403\b", low):
+    return 401, "AI is not configured correctly (missing/invalid API key)."
+
+  # Timeouts.
+  if "timeout" in low or "deadline exceeded" in low:
+    return 504, "AI took too long to respond. Please try again."
+
+  return 500, "AI request failed. Please try again."
+
+
 @ai_bp.post("/api/ai/text")
 def ai_text():
   payload = request.get_json(silent=True) or {}
   prompt = payload.get("prompt", "")
   model = payload.get("model") or DEFAULT_TEXT_MODEL
 
+  t0 = time.perf_counter()
+  try:
+    print(
+      f"[AI][{_rid()}] /api/ai/text -> model={model} promptPreview={_preview_text(str(prompt), 180)!r}",
+      flush=True,
+    )
+  except Exception:
+    pass
+
   try:
     text = generate_text(prompt=prompt, model=model)
   except ValueError as e:
     return _json_error(str(e), 400)
   except Exception as e:
-    return _json_error(str(e), 500)
+    status, msg = _ai_exception_to_http(e)
+    ai_logger.exception(
+      json.dumps(
+        {
+          "type": "ai_error",
+          "endpoint": "/api/ai/text",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "error": str(e),
+        },
+        ensure_ascii=False,
+      )
+    )
+    return _json_error(msg, status)
+
+  t_ms = int((time.perf_counter() - t0) * 1000)
+  try:
+    print(
+      f"[AI][{_rid()}] /api/ai/text <- ok {t_ms}ms chars={len(text or '')} preview={_preview_text(text or '', 200)!r}",
+      flush=True,
+    )
+  except Exception:
+    pass
+
+  # Log a small preview of what the model returned.
+  ai_logger.info(
+    json.dumps(
+      {
+        "type": "ai_response",
+        "endpoint": "/api/ai/text",
+        "requestId": getattr(g, "request_id", None),
+        "model": model,
+        "chars": len(text or ""),
+        "preview": _preview_text(text or ""),
+      },
+      ensure_ascii=False,
+    )
+  )
 
   return jsonify({"model": model, "text": text})
 
@@ -74,7 +165,38 @@ def ai_image():
   except ValueError as e:
     return _json_error(str(e), 400)
   except Exception as e:
-    return _json_error(str(e), 500)
+    status, msg = _ai_exception_to_http(e)
+    ai_logger.exception(
+      json.dumps(
+        {
+          "type": "ai_error",
+          "endpoint": "/api/ai/image",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "error": str(e),
+        },
+        ensure_ascii=False,
+      )
+    )
+    return _json_error(msg, status)
+
+  first = images[0] if images else None
+  if first:
+    b64 = (first.get("base64") or "")
+    ai_logger.info(
+      json.dumps(
+        {
+          "type": "ai_response",
+          "endpoint": "/api/ai/image",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "mimeType": first.get("mimeType"),
+          "base64Len": len(b64),
+          "base64Prefix": b64[:48],
+        },
+        ensure_ascii=False,
+      )
+    )
 
   return jsonify({"model": model, "images": images})
 
@@ -99,7 +221,38 @@ def ai_image_recreate():
   except ValueError as e:
     return _json_error(str(e), 400)
   except Exception as e:
-    return _json_error(str(e), 500)
+    status, msg = _ai_exception_to_http(e)
+    ai_logger.exception(
+      json.dumps(
+        {
+          "type": "ai_error",
+          "endpoint": "/api/ai/image/recreate",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "error": str(e),
+        },
+        ensure_ascii=False,
+      )
+    )
+    return _json_error(msg, status)
+
+  first = images[0] if images else None
+  if first:
+    b64 = (first.get("base64") or "")
+    ai_logger.info(
+      json.dumps(
+        {
+          "type": "ai_response",
+          "endpoint": "/api/ai/image/recreate",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "mimeType": first.get("mimeType"),
+          "base64Len": len(b64),
+          "base64Prefix": b64[:48],
+        },
+        ensure_ascii=False,
+      )
+    )
 
   return jsonify({"model": model, "images": images})
 
@@ -118,7 +271,21 @@ def ai_generate():
     except ValueError as e:
       return _json_error(str(e), 400)
     except Exception as e:
-      return _json_error(str(e), 500)
+      status, msg = _ai_exception_to_http(e)
+      ai_logger.exception(
+        json.dumps(
+          {
+            "type": "ai_error",
+            "endpoint": "/api/ai/generate",
+            "requestId": getattr(g, "request_id", None),
+            "model": model,
+            "mode": "text",
+            "error": str(e),
+          },
+          ensure_ascii=False,
+        )
+      )
+      return _json_error(msg, status)
     return jsonify({"type": "text", "model": model, "text": text})
 
   if kind in ("image", "img", "images"):
@@ -146,7 +313,21 @@ def ai_generate():
     except ValueError as e:
       return _json_error(str(e), 400)
     except Exception as e:
-      return _json_error(str(e), 500)
+      status, msg = _ai_exception_to_http(e)
+      ai_logger.exception(
+        json.dumps(
+          {
+            "type": "ai_error",
+            "endpoint": "/api/ai/generate",
+            "requestId": getattr(g, "request_id", None),
+            "model": model,
+            "mode": "image",
+            "error": str(e),
+          },
+          ensure_ascii=False,
+        )
+      )
+      return _json_error(msg, status)
     return jsonify({"type": "image", "model": model, "images": images})
 
   return _json_error('Invalid type. Use "text" or "image".', 400)
@@ -189,6 +370,21 @@ def ai_flyer():
   minister_files = request.files.getlist("ministers")
   minister_count = len(minister_files)
 
+  if minister_count > MAX_MINISTERS:
+    return _json_error(f"Too many ministers. Max allowed is {MAX_MINISTERS}.", 400)
+
+  # Validation: if minister images were uploaded, each must have a title in ministersMeta.
+  if minister_count > 0:
+    if not isinstance(ministers_meta, list) or len(ministers_meta) != minister_count:
+      return _json_error("ministersMeta must include name/title for each uploaded minister image.", 400)
+
+    for i, meta in enumerate(ministers_meta):
+      if not isinstance(meta, dict):
+        return _json_error(f"Invalid ministersMeta at index {i}.", 400)
+      title = (meta.get("title") or "").strip()
+      if not title:
+        return _json_error(f"Missing Title/Role for minister {i+1}.", 400)
+
   try:
     template_path, bucket = pick_template_image(minister_count)
     template_bytes = template_path.read_bytes()
@@ -201,64 +397,253 @@ def ai_flyer():
   event_name = (event_details.get("eventName") or "").strip()
   theme = (event_details.get("theme") or "").strip()
   date = (event_details.get("date") or "").strip()
-  time = (event_details.get("time") or "").strip()
+  event_time = (event_details.get("time") or "").strip()
   venue = (event_details.get("venue") or "").strip()
   other = (event_details.get("otherInfo") or "").strip()
 
-  ministers_lines = []
-  for i, meta in enumerate(ministers_meta[: len(minister_files)]):
-    if not isinstance(meta, dict):
-      continue
+  # Read upload bytes once; order is fixed for both prompt text and `refs`.
+  logo_refs: list[tuple[bytes, str]] = []
+  for f in logos_files:
+    data = f.read()
+    if data:
+      logo_refs.append((data, _guess_mime(f.filename)))
+
+  minister_refs: list[tuple[bytes, str]] = []
+  for f in minister_files:
+    data = f.read()
+    if data:
+      minister_refs.append((data, _guess_mime(f.filename)))
+
+  n_logos = len(logo_refs)
+  n_minister_imgs = len(minister_refs)
+
+  # 1-based indices: #1 template, #2..#(1+n_logos) logos, then ministers.
+  ref_order_lines: list[str] = [
+    "REFERENCE IMAGE ORDER (STRICT — DO NOT MIX OR SWAP):",
+    "The model receives reference images in this exact 1-based order. Each index maps to exactly one use.",
+    "",
+    '- Reference image #1: FLYER TEMPLATE — layout, composition, and typography style guide ONLY.',
+    "  Use it for structure and placement. Do NOT keep template placeholder faces in the final image.",
+    "  Replace each minister/person region using ONLY the minister photo with the matching index below.",
+    "",
+    "CRITICAL — DO NOT CONFUSE LOGOS WITH PEOPLE:",
+    "- Logo reference images are brand marks (symbols/text marks). They are NOT faces and NOT ministers.",
+    "- Minister reference images are photos of people. They are NOT logos.",
+    "- Never place a logo image inside a minister/person frame.",
+    "- Never place a minister photo where a logo belongs.",
+    "",
+  ]
+
+  for j in range(n_logos):
+    idx = 2 + j
+    ref_order_lines.append(
+      f"- Reference image #{idx}: LOGO #{j + 1} — organization/church logo graphic ONLY. "
+      "Not a person. Not a minister. Use only as a small brand mark where the template has logo space."
+    )
+
+  minister_base_idx = 2 + n_logos
+  ministers_lines: list[str] = []
+  for k in range(minister_count):
+    meta = ministers_meta[k] if k < len(ministers_meta) and isinstance(ministers_meta[k], dict) else {}
     name = (meta.get("name") or "").strip()
     title = (meta.get("title") or "").strip()
-    if name and title:
-      ministers_lines.append(f"- Minister {i+1}: {name} ({title})")
+    ref_idx = minister_base_idx + k
+    role_line = f"Reference image #{ref_idx} = MINISTER PHOTO for slot #{k + 1} ONLY."
+    if title and name:
+      ministers_lines.append(f"- Slot {k + 1} ({role_line}): {name} — role/title on flyer: \"{title}\"")
+    elif title:
+      ministers_lines.append(f"- Slot {k + 1} ({role_line}): role/title on flyer: \"{title}\"")
     elif name:
-      ministers_lines.append(f"- Minister {i+1}: {name}")
+      ministers_lines.append(f"- Slot {k + 1} ({role_line}): {name}")
+
+    if k < n_minister_imgs:
+      ref_order_lines.append(
+        f"- Reference image #{ref_idx}: MINISTER PHOTO #{k + 1} ONLY — minister slot #{k + 1} on the template."
+        + (f' This face/body MUST be labeled on the flyer as: \"{title}\"' if title else "")
+        + (f' (name if shown: \"{name}\")' if name else "")
+        + ". Use ONLY this file for this slot — never for another slot, never as a logo."
+      )
+
+  if n_minister_imgs == 1:
+    minister_slot_summary = f"- Follow REFERENCE IMAGE ORDER: the only minister photo is reference image #{minister_base_idx} — use it for minister slot 1 only."
+  elif n_minister_imgs > 1:
+    minister_slot_summary = (
+      f"- Follow REFERENCE IMAGE ORDER: minister slots 1–{n_minister_imgs} map to reference images "
+      f"#{minister_base_idx}–#{minister_base_idx + n_minister_imgs - 1} in upload order (one slot per image, no swaps)."
+    )
+  else:
+    minister_slot_summary = "- No minister photo references were uploaded."
 
   prompt_lines = [
-    "Use simple, clear English. Keep text short and neat.",
-    "Create a clean, premium church event flyer image in 9:16.",
-    "Use the first reference image as the template layout guide.",
-    "Place the provided logos and minister photos neatly on the flyer.",
-    "Keep faces natural and consistent with the photos.",
-    "Make sure the flyer looks professional and balanced.",
+    "Flyer Builder Prompt",
     "",
-    "Flyer text to include (spell correctly):",
+    "You are editing an existing flyer template using new inputs.",
+    "You are NOT designing from scratch.",
+    "",
+    "GOAL:",
+    "Recreate the reference flyer with very high visual similarity in layout, structure, and style.",
+    "",
+    "INPUTS:",
+    "- Event details (title, date, time, venue, theme, other info)",
+    "- Reference images (exact order and meaning — see next section)",
+    "- Background concept",
+    "",
+    *ref_order_lines,
+    "",
+    "CORE RULE:",
+    "The template layout is locked. Only replace content.",
+    "",
+    "----------------------------------",
+    "",
+    "WHAT TO PRESERVE (STRICT):",
+    "- Layout and composition",
+    "- Element positions and spacing",
+    "- Typography style and hierarchy (same font style and emphasis)",
+    "- Color grading and lighting",
+    "- Effects (glow, shadows, overlays)",
+    "",
+    "----------------------------------",
+    "",
+    "WHAT TO REPLACE:",
+    "",
+    "1. Background",
+    "- Replace the background subject/scene using the selected concept.",
+    "- Match the same lighting, depth, and cinematic style as the template.",
+    "",
+    "2. Title and event text",
+    "- Replace ALL text with the user-provided text below.",
+    "- Keep the same font style, size, and placement from the template.",
+    "- Text must be spelled exactly as provided (no paraphrasing).",
+    "",
+    "3. Minister Images",
+    minister_slot_summary,
+    "- Do NOT invent faces. Do NOT merge faces. Do NOT swap ministers between slots.",
+    "- Match the template cropping and framing for each minister slot.",
+    "- Apply the same lighting and color grading as the template so they fit naturally.",
+    "",
+    "4. Logos (if provided)",
+    *(
+      [
+        f"- Follow REFERENCE IMAGE ORDER: logos use reference images #2 through #{1 + n_logos} in upload order (template is always #1).",
+        "- Place naturally based on the template style.",
+        "- Maintain proper scale and clarity.",
+      ]
+      if n_logos > 0
+      else ["- No logo reference images were uploaded."]
+    ),
+    "",
+    "----------------------------------",
+    "",
+    "CONSISTENCY RULE:",
+    "All elements must match the same lighting, color tone, contrast, and atmosphere.",
+    "",
+    "----------------------------------",
+    "",
+    "STRICT RULES:",
+    "- Do NOT change layout.",
+    "- Do NOT add new elements.",
+    "- Do NOT add any text that was not provided below.",
+    "- Do NOT leave any template text or faces in the final output.",
+    "- Do NOT add watermarks.",
+    "",
+    "----------------------------------",
+    "",
+    "VALIDATION BEFORE OUTPUT:",
+    "- All text matches user input exactly.",
+    "- No extra or missing elements.",
+    "- No template faces or text remain.",
+    "- Layout matches reference structure.",
+    "",
+    "If any rule fails, regenerate correctly.",
+    "",
+    "PRIORITY:",
+    "1. Match template layout",
+    "2. Use correct user content",
+    "3. Maintain visual consistency",
+    "4. Then enhance quality",
+    "",
+    "OUTPUT:",
+    "- Single clean flyer image, aspect ratio 9:16.",
+    "",
+    "----------------------------------",
+    "",
+    "USER CONTENT (use exactly):",
     f"- Church/Ministry: {church}" if church else None,
     f"- Event name: {event_name}" if event_name else None,
     f"- Theme: {theme}" if theme else None,
     f"- Date: {date}" if date else None,
-    f"- Time: {time}" if time else None,
+    f"- Time: {event_time}" if event_time else None,
     f"- Venue: {venue}" if venue else None,
     f"- Other info: {other}" if other else None,
     "",
-    "Ministers (if any):",
+    "Ministers (slot → reference image → text on flyer):",
     *ministers_lines,
     "",
     f"Background concept: {concept}" if concept else None,
     "",
-    "Do not add extra information that was not provided.",
-    "Do not add watermarks.",
-    message and f"Edit instructions: {message}",
+    message and f"Edit instructions (only if provided): {message}",
   ]
-  prompt = "\n".join([l for l in prompt_lines if l])
+  # Keep prompt tidy (no empty/None lines).
+  prompt = "\n".join([l for l in prompt_lines if isinstance(l, str) and l.strip()])
 
-  # Reference images order matters: template first, then logos, then ministers.
-  refs: list[tuple[bytes, str]] = [(template_bytes, template_mime)]
-  for f in logos_files:
-    data = f.read()
-    if data:
-      refs.append((data, _guess_mime(f.filename)))
-  for f in minister_files:
-    data = f.read()
-    if data:
-      refs.append((data, _guess_mime(f.filename)))
+  # Reference images order MUST match REFERENCE IMAGE ORDER in the prompt: template, logos, ministers.
+  refs: list[tuple[bytes, str]] = [(template_bytes, template_mime)] + logo_refs + minister_refs
+
+  t0 = time.perf_counter()
+  try:
+    print(
+      f"[AI][{_rid()}] /api/ai/flyer -> model={model} templateBucket={bucket} logos={len(logos_files)} ministers={minister_count} messageChars={len(message)} promptPreview={_preview_text(prompt, 180)!r}",
+      flush=True,
+    )
+  except Exception:
+    pass
 
   try:
     images = generate_flyer_image_base64(prompt=prompt, model=model, reference_images_bytes=refs, aspect_ratio="9:16", number_of_images=1)
   except Exception as e:
-    return _json_error(str(e), 500)
+    status, msg = _ai_exception_to_http(e)
+    ai_logger.exception(
+      json.dumps(
+        {
+          "type": "ai_error",
+          "endpoint": "/api/ai/flyer",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "templateBucket": bucket,
+          "error": str(e),
+        },
+        ensure_ascii=False,
+      )
+    )
+    return _json_error(msg, status)
+
+  t_ms = int((time.perf_counter() - t0) * 1000)
+  first = images[0] if images else None
+  if first:
+    b64 = (first.get("base64") or "")
+    try:
+      print(
+        f"[AI][{_rid()}] /api/ai/flyer <- ok {t_ms}ms mimeType={first.get('mimeType')} base64Len={len(b64)}",
+        flush=True,
+      )
+    except Exception:
+      pass
+    ai_logger.info(
+      json.dumps(
+        {
+          "type": "ai_response",
+          "endpoint": "/api/ai/flyer",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "templateBucket": bucket,
+          "templateFile": template_path.name,
+          "mimeType": first.get("mimeType"),
+          "base64Len": len(b64),
+          "base64Prefix": b64[:48],
+        },
+        ensure_ascii=False,
+      )
+    )
 
   return jsonify(
     {
