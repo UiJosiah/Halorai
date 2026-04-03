@@ -22,3 +22,5 @@ const NotFound = () => {
 };
 
 export default NotFound;
+
+// This component is a simple 404 Not Found page that displays a message when a user tries to access a route that doesn't exist. It uses the `useLocation` hook from `react-router-dom` to get the current path and logs an error message to the console for debugging purposes. The page includes a link to return to the home page.
