@@ -99,9 +99,36 @@ export async function aiGenerateText(prompt: string, model?: string): Promise<Ai
   });
 }
 
+export type AiImageResponse = { model: string; images: { mimeType: string; base64: string }[] };
+
+export type AiImageReference = { mimeType: string; base64: string };
+
+/** Text-to-image, or image-to-image when `referenceImages` is non-empty (same `/api/ai/image` route). */
+export async function aiGenerateImage(payload: {
+  prompt: string;
+  model?: string;
+  aspectRatio?: string;
+  numberOfImages?: number;
+  referenceImages?: AiImageReference[];
+}): Promise<AiImageResponse> {
+  const body: Record<string, unknown> = {
+    prompt: payload.prompt,
+    aspectRatio: payload.aspectRatio ?? "9:16",
+    numberOfImages: payload.numberOfImages ?? 1,
+  };
+  if (payload.model) body.model = payload.model;
+  if (payload.referenceImages?.length) body.referenceImages = payload.referenceImages;
+
+  return await requestJson<AiImageResponse>(apiUrl("/api/ai/image"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export type AiFlyerResponse = {
   model: string;
-  template?: { bucket: string; file: string };
+  template?: { bucket: string; file: string; title?: string };
   images: { mimeType: string; base64: string }[];
 };
 
@@ -110,11 +137,14 @@ export async function aiGenerateFlyer(payload: {
   concept?: string;
   message?: string;
   ministersMeta?: { name: string; title: string }[];
+  /** User-selected 9:16 background from Step 3ii (required for flyer composition). */
+  backgroundImage: File;
   logos?: File[];
   ministers?: File[];
 }): Promise<AiFlyerResponse> {
   const fd = new FormData();
   fd.append("eventDetails", JSON.stringify(payload.eventDetails ?? {}));
+  fd.append("backgroundImage", payload.backgroundImage);
   if (payload.concept) fd.append("concept", payload.concept);
   if (payload.message) fd.append("message", payload.message);
   if (payload.ministersMeta?.length) fd.append("ministersMeta", JSON.stringify(payload.ministersMeta));

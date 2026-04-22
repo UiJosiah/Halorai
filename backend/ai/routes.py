@@ -341,10 +341,11 @@ def ai_flyer():
   Fields:
   - eventDetails: JSON string
   - concept: string (optional)
-  - ministersMeta: JSON string of [{name,title}, ...] aligned with ministers[] files order
+  - ministersMeta: JSON string of [{name,title}, ...] aligned with ministers[] files order (title optional)
   - message: string (optional; edit instructions)
 
   Files:
+  - backgroundImage: required — user-selected 9:16 background from Step 3ii (image bytes)
   - logos: multiple image files (0-2)
   - ministers: multiple image files
   """
@@ -373,17 +374,14 @@ def ai_flyer():
   if minister_count > MAX_MINISTERS:
     return _json_error(f"Too many ministers. Max allowed is {MAX_MINISTERS}.", 400)
 
-  # Validation: if minister images were uploaded, each must have a title in ministersMeta.
+  # Validation: if minister images were uploaded, ministersMeta must align (name/title optional; matches Step 2 UI).
   if minister_count > 0:
     if not isinstance(ministers_meta, list) or len(ministers_meta) != minister_count:
-      return _json_error("ministersMeta must include name/title for each uploaded minister image.", 400)
+      return _json_error("ministersMeta must include one entry per uploaded minister image.", 400)
 
     for i, meta in enumerate(ministers_meta):
       if not isinstance(meta, dict):
         return _json_error(f"Invalid ministersMeta at index {i}.", 400)
-      title = (meta.get("title") or "").strip()
-      if not title:
-        return _json_error(f"Missing Title/Role for minister {i+1}.", 400)
 
   try:
     template_path, bucket = pick_template_image(minister_count)
@@ -391,6 +389,15 @@ def ai_flyer():
     template_mime = _guess_mime(template_path.name)
   except Exception as e:
     return _json_error(str(e), 500)
+
+  template_title = template_path.stem
+  try:
+    print(
+      f"[AI][{_rid()}] /api/ai/flyer templateSelected title={template_title!r} file={template_path.name!r} bucket={bucket!r}",
+      flush=True,
+    )
+  except Exception:
+    pass
 
   # Build prompt (simple English).
   church = (event_details.get("churchName") or "").strip()
@@ -414,17 +421,31 @@ def ai_flyer():
     if data:
       minister_refs.append((data, _guess_mime(f.filename)))
 
+  bg_file = request.files.get("backgroundImage")
+  if not bg_file:
+    return _json_error("backgroundImage is required (the user-selected 9:16 background from Step 3ii).", 400)
+  bg_bytes = bg_file.read()
+  if not bg_bytes:
+    return _json_error("backgroundImage is empty.", 400)
+  bg_mime = _guess_mime(getattr(bg_file, "filename", "") or "") or "image/png"
+
   n_logos = len(logo_refs)
   n_minister_imgs = len(minister_refs)
 
-  # 1-based indices: #1 template, #2..#(1+n_logos) logos, then ministers.
+  # 1-based indices: #1 user background, #2 template, #3..#(2+n_logos) logos, then ministers.
   ref_order_lines: list[str] = [
     "REFERENCE IMAGE ORDER (STRICT — DO NOT MIX OR SWAP):",
     "The model receives reference images in this exact 1-based order. Each index maps to exactly one use.",
     "",
-    '- Reference image #1: FLYER TEMPLATE — layout, composition, and typography style guide ONLY.',
-    "  Use it for structure and placement. Do NOT keep template placeholder faces in the final image.",
-    "  Replace each minister/person region using ONLY the minister photo with the matching index below.",
+    "- Reference image #1: USER-SELECTED BACKGROUND (9:16).",
+    "  This is the real flyer background artwork. Preserve its scene, colors, lighting, and mood.",
+    "  Do NOT replace it with a newly invented background. Do NOT paste the template (image #2) over it as the scene.",
+    "  Composite all text, logos, and minister portraits ON TOP of this background only.",
+    "",
+    "- Reference image #2: FLYER TEMPLATE — layout and typography style guide ONLY.",
+    "  Use it ONLY to learn where text blocks, logo areas, and minister photo frames are placed.",
+    "  Do NOT use the template as the final background. Remove template placeholder faces and template sample text from the final output.",
+    "  Align your layers with image #1 so placements match the template’s structure.",
     "",
     "CRITICAL — DO NOT CONFUSE LOGOS WITH PEOPLE:",
     "- Logo reference images are brand marks (symbols/text marks). They are NOT faces and NOT ministers.",
@@ -435,13 +456,13 @@ def ai_flyer():
   ]
 
   for j in range(n_logos):
-    idx = 2 + j
+    idx = 3 + j
     ref_order_lines.append(
       f"- Reference image #{idx}: LOGO #{j + 1} — organization/church logo graphic ONLY. "
       "Not a person. Not a minister. Use only as a small brand mark where the template has logo space."
     )
 
-  minister_base_idx = 2 + n_logos
+  minister_base_idx = 3 + n_logos
   ministers_lines: list[str] = []
   for k in range(minister_count):
     meta = ministers_meta[k] if k < len(ministers_meta) and isinstance(ministers_meta[k], dict) else {}
@@ -455,6 +476,8 @@ def ai_flyer():
       ministers_lines.append(f"- Slot {k + 1} ({role_line}): role/title on flyer: \"{title}\"")
     elif name:
       ministers_lines.append(f"- Slot {k + 1} ({role_line}): {name}")
+    else:
+      ministers_lines.append(f"- Slot {k + 1} ({role_line}): use minister photo only (no name or title text on flyer unless the template implies it).")
 
     if k < n_minister_imgs:
       ref_order_lines.append(
@@ -477,56 +500,51 @@ def ai_flyer():
   prompt_lines = [
     "Flyer Builder Prompt",
     "",
-    "You are editing an existing flyer template using new inputs.",
-    "You are NOT designing from scratch.",
+    "You are compositing a finished church/event flyer.",
+    "You are NOT asked to invent a new background scene.",
     "",
     "GOAL:",
-    "Recreate the reference flyer with very high visual similarity in layout, structure, and style.",
+    "Start from the user’s chosen background (reference #1).",
+    "Use the template (reference #2) only as a map for where to place text, logos, and minister photos.",
+    "Output one 9:16 flyer that keeps the background artwork and adds correct event details and assets.",
     "",
     "INPUTS:",
     "- Event details (title, date, time, venue, theme, other info)",
-    "- Reference images (exact order and meaning — see next section)",
-    "- Background concept",
+    "- Reference images (exact order — see next section)",
+    "- Optional creative notes (if provided)",
     "",
     *ref_order_lines,
     "",
     "CORE RULE:",
-    "The template layout is locked. Only replace content.",
+    "Image #1 is the canvas. Image #2 defines placement and typography style only.",
+    "Do not replace image #1 with a different scene. Do not output the template image as the background.",
     "",
     "----------------------------------",
     "",
     "WHAT TO PRESERVE (STRICT):",
-    "- Layout and composition",
-    "- Element positions and spacing",
-    "- Typography style and hierarchy (same font style and emphasis)",
-    "- Color grading and lighting",
-    "- Effects (glow, shadows, overlays)",
+    "- The background from reference #1 (scene, palette, lighting, atmosphere).",
+    "- Overall 9:16 framing.",
     "",
     "----------------------------------",
     "",
-    "WHAT TO REPLACE:",
+    "WHAT TO ADD / REPLACE:",
     "",
-    "1. Background",
-    "- Replace the background subject/scene using the selected concept.",
-    "- Match the same lighting, depth, and cinematic style as the template.",
+    "1. Typography and text blocks",
+    "- Use reference #2 to decide positions, hierarchy, and font style for titles, subtitles, date, time, venue, etc.",
+    "- Render the USER CONTENT text exactly as written (no paraphrasing, no spelling changes).",
+    "- Text must read clearly on top of the user background (contrast, subtle backing if needed).",
     "",
-    "2. Title and event text",
-    "- Replace ALL text with the user-provided text below.",
-    "- Keep the same font style, size, and placement from the template.",
-    "- Text must be spelled exactly as provided (no paraphrasing).",
-    "",
-    "3. Minister Images",
+    "2. Minister photos",
     minister_slot_summary,
     "- Do NOT invent faces. Do NOT merge faces. Do NOT swap ministers between slots.",
-    "- Match the template cropping and framing for each minister slot.",
-    "- Apply the same lighting and color grading as the template so they fit naturally.",
+    "- Place each minister photo in the region suggested by the template (#2), scaled and cropped to fit image #1.",
+    "- Remove any template placeholder faces; use only the provided minister reference images.",
     "",
-    "4. Logos (if provided)",
+    "3. Logos (if provided)",
     *(
       [
-        f"- Follow REFERENCE IMAGE ORDER: logos use reference images #2 through #{1 + n_logos} in upload order (template is always #1).",
-        "- Place naturally based on the template style.",
-        "- Maintain proper scale and clarity.",
+        f"- Logos are reference images #{3} through #{2 + n_logos} (after background #1 and template #2).",
+        "- Place each logo where the template implies a brand mark. Keep crisp edges and sensible scale.",
       ]
       if n_logos > 0
       else ["- No logo reference images were uploaded."]
@@ -535,32 +553,30 @@ def ai_flyer():
     "----------------------------------",
     "",
     "CONSISTENCY RULE:",
-    "All elements must match the same lighting, color tone, contrast, and atmosphere.",
+    "Text, logos, and faces should feel integrated with the lighting and color of background #1.",
     "",
     "----------------------------------",
     "",
     "STRICT RULES:",
-    "- Do NOT change layout.",
-    "- Do NOT add new elements.",
-    "- Do NOT add any text that was not provided below.",
-    "- Do NOT leave any template text or faces in the final output.",
+    "- Do NOT generate a wholly new unrelated background.",
+    "- Do NOT add text that is not from USER CONTENT or minister labels below.",
+    "- Do NOT leave template sample text or placeholder faces visible.",
     "- Do NOT add watermarks.",
     "",
     "----------------------------------",
     "",
     "VALIDATION BEFORE OUTPUT:",
-    "- All text matches user input exactly.",
-    "- No extra or missing elements.",
-    "- No template faces or text remain.",
-    "- Layout matches reference structure.",
+    "- Background still matches reference #1’s scene (not swapped for template art).",
+    "- All USER CONTENT text is present and spelled exactly as given.",
+    "- Minister and logo references used in the correct slots.",
     "",
     "If any rule fails, regenerate correctly.",
     "",
     "PRIORITY:",
-    "1. Match template layout",
-    "2. Use correct user content",
-    "3. Maintain visual consistency",
-    "4. Then enhance quality",
+    "1. Preserve user background #1",
+    "2. Match template #2 placement for details",
+    "3. Exact user text and correct assets",
+    "4. Polish integration (shadows, readability)",
     "",
     "OUTPUT:",
     "- Single clean flyer image, aspect ratio 9:16.",
@@ -579,20 +595,20 @@ def ai_flyer():
     "Ministers (slot → reference image → text on flyer):",
     *ministers_lines,
     "",
-    f"Background concept: {concept}" if concept else None,
+    f"Optional creative / tone notes (do not replace the background): {concept}" if concept else None,
     "",
     message and f"Edit instructions (only if provided): {message}",
   ]
   # Keep prompt tidy (no empty/None lines).
   prompt = "\n".join([l for l in prompt_lines if isinstance(l, str) and l.strip()])
 
-  # Reference images order MUST match REFERENCE IMAGE ORDER in the prompt: template, logos, ministers.
-  refs: list[tuple[bytes, str]] = [(template_bytes, template_mime)] + logo_refs + minister_refs
+  # Order MUST match the prompt: user background, template, logos, ministers.
+  refs: list[tuple[bytes, str]] = [(bg_bytes, bg_mime), (template_bytes, template_mime)] + logo_refs + minister_refs
 
   t0 = time.perf_counter()
   try:
     print(
-      f"[AI][{_rid()}] /api/ai/flyer -> model={model} templateBucket={bucket} logos={len(logos_files)} ministers={minister_count} messageChars={len(message)} promptPreview={_preview_text(prompt, 180)!r}",
+      f"[AI][{_rid()}] /api/ai/flyer -> model={model} templateTitle={template_title!r} templateFile={template_path.name!r} templateBucket={bucket} bgBytes={len(bg_bytes)} logos={len(logos_files)} ministers={minister_count} messageChars={len(message)} promptPreview={_preview_text(prompt, 180)!r}",
       flush=True,
     )
   except Exception:
@@ -609,6 +625,8 @@ def ai_flyer():
           "endpoint": "/api/ai/flyer",
           "requestId": getattr(g, "request_id", None),
           "model": model,
+          "templateTitle": template_title,
+          "templateFile": template_path.name,
           "templateBucket": bucket,
           "error": str(e),
         },
@@ -623,7 +641,7 @@ def ai_flyer():
     b64 = (first.get("base64") or "")
     try:
       print(
-        f"[AI][{_rid()}] /api/ai/flyer <- ok {t_ms}ms mimeType={first.get('mimeType')} base64Len={len(b64)}",
+        f"[AI][{_rid()}] /api/ai/flyer <- ok {t_ms}ms templateTitle={template_title!r} mimeType={first.get('mimeType')} base64Len={len(b64)}",
         flush=True,
       )
     except Exception:
@@ -635,6 +653,7 @@ def ai_flyer():
           "endpoint": "/api/ai/flyer",
           "requestId": getattr(g, "request_id", None),
           "model": model,
+          "templateTitle": template_title,
           "templateBucket": bucket,
           "templateFile": template_path.name,
           "mimeType": first.get("mimeType"),
@@ -648,7 +667,7 @@ def ai_flyer():
   return jsonify(
     {
       "model": model,
-      "template": {"bucket": bucket, "file": template_path.name},
+      "template": {"bucket": bucket, "file": template_path.name, "title": template_title},
       "images": images,
     }
   )

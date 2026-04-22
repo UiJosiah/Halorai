@@ -7,6 +7,7 @@ import HaloRAI from "./pages/HaloRAI";
 import CreateDesign from "./pages/CreateDesign";
 import CreateDesignStep2 from "./pages/CreateDesignStep2";
 import CreateDesignStep3 from "./pages/CreateDesignStep3";
+import CreateDesignStep3ii from "./pages/CreateDesignStep3ii";
 import CreateDesignStep4 from "./pages/CreateDesignStep4";
 import CreateDesignStep5 from "./pages/CreateDesignStep5";
 import NotFound from "./pages/NotFound";
@@ -26,6 +27,7 @@ const App = () => (
             <Route path="/create-design" element={<CreateDesign />} />
             <Route path="/create-design/step-2" element={<CreateDesignStep2 />} />
             <Route path="/create-design/step-3" element={<CreateDesignStep3 />} />
+            <Route path="/create-design/step-3ii" element={<CreateDesignStep3ii />} />
             <Route path="/create-design/step-4" element={<CreateDesignStep4 />} />
             <Route path="/create-design/step-5" element={<CreateDesignStep5 />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

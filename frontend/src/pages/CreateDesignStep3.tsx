@@ -3,14 +3,23 @@ import { useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import CreateDesignHero from "@/components/CreateDesignHero";
 import StepperProgress from "@/components/StepperProgress";
-import { useCreateDesign } from "@/contexts/CreateDesignContext";
+import { CUSTOM_CONCEPT_ID, useCreateDesign } from "@/contexts/CreateDesignContext";
 import { aiGenerateText } from "@/lib/api";
 import ArcLoader from "@/components/ArcLoader";
 
 const CreateDesignStep3 = () => {
   const navigate = useNavigate();
-  const { eventDetails, concepts, setConcepts, conceptsKey, setConceptsKey, selectedConceptId, setSelectedConceptId } =
-    useCreateDesign();
+  const {
+    eventDetails,
+    concepts,
+    setConcepts,
+    conceptsKey,
+    setConceptsKey,
+    selectedConceptId,
+    setSelectedConceptId,
+    customConceptText,
+    setCustomConceptText,
+  } = useCreateDesign();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -195,6 +204,8 @@ const CreateDesignStep3 = () => {
   }, [generateConcepts]);
 
   const selected = selectedConceptId ?? concepts[0]?.id ?? null;
+  const canContinue =
+    !!selected && !(selected === CUSTOM_CONCEPT_ID && !customConceptText.trim());
 
   return (
     <AppLayout>
@@ -264,10 +275,12 @@ const CreateDesignStep3 = () => {
                   </div>
                 ) : null}
 
-                {!isAnalyzing
-                  ? concepts.map((concept) => (
+                {!isAnalyzing ? (
+                  <>
+                    {concepts.map((concept) => (
                       <button
                         key={concept.id}
+                        type="button"
                         onClick={() => setSelectedConceptId(concept.id)}
                         className={`w-full md:max-w-[440px] text-left border rounded-2xl p-5 cursor-pointer transition-all duration-150 ease-out ${
                           selected === concept.id
@@ -286,8 +299,41 @@ const CreateDesignStep3 = () => {
                         </span>
                         <p className="text-sm text-[hsl(0,0%,40%)]">{concept.description}</p>
                       </button>
-                    ))
-                  : null}
+                    ))}
+
+                    <div
+                      role="presentation"
+                      onClick={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
+                      className={`w-full md:max-w-[440px] text-left border rounded-2xl p-4 cursor-pointer transition-all duration-150 ease-out ${
+                        selected === CUSTOM_CONCEPT_ID
+                          ? "border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)]"
+                          : "bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,70%)]"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block text-sm font-medium px-3 py-1.5 rounded-full mb-3 ${
+                          selected === CUSTOM_CONCEPT_ID
+                            ? "bg-[hsl(330,100%,93%)] text-[hsl(0,0%,10%)]"
+                            : "bg-white text-[hsl(0,0%,10%)]"
+                        }`}
+                      >
+                        Custom
+                      </span>
+                      <textarea
+                        value={customConceptText}
+                        onChange={(e) => {
+                          setCustomConceptText(e.target.value);
+                          setSelectedConceptId(CUSTOM_CONCEPT_ID);
+                        }}
+                        onFocus={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
+                        onClick={(e) => e.stopPropagation()}
+                        placeholder="Input your own concept..."
+                        rows={4}
+                        className="w-full h-[60px] bg-transparent text-sm text-[hsl(0,0%,40%)] placeholder:text-[hsl(0,0%,65%)] outline-none cursor-text"
+                      />
+                    </div>
+                  </>
+                ) : null}
               </div>
 
               {/* Navigation Buttons (kept under right column) */}
@@ -304,10 +350,10 @@ const CreateDesignStep3 = () => {
                   Go back
                 </button>
                 <button
-                  onClick={() => navigate("/create-design/step-4")}
-                  disabled={isAnalyzing || !selected}
+                  onClick={() => navigate("/create-design/step-3ii")}
+                  disabled={isAnalyzing || !canContinue}
                   className={`flex items-center gap-2 border-none rounded-full px-4 py-3 text-xs font-medium transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99] ${
-                    isAnalyzing || !selected
+                    isAnalyzing || !canContinue
                       ? "bg-[hsl(0,0%,60%)] text-white cursor-not-allowed"
                       : "bg-[hsl(0,0%,10%)] text-white cursor-pointer hover:bg-[hsl(0,0%,20%)]"
                   }`}

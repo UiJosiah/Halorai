@@ -89,12 +89,12 @@ const CreateDesignStep2 = () => {
     });
   };
 
-  const missingMinisterTitle = useMemo(() => {
+  const missingMinisterName = useMemo(() => {
     if (!ministers.length) return false;
-    return ministers.some((m) => !m.title.trim());
+    return ministers.some((m) => !m.name.trim());
   }, [ministers]);
 
-  const canContinue = !missingMinisterTitle;
+  const canContinue = !missingMinisterName;
 
   return (
     <AppLayout>
@@ -209,7 +209,7 @@ const CreateDesignStep2 = () => {
             <div className="md:pl-12 xl:pl-14">
               <h3 className="text-sm font-semibold text-[hsl(0,0%,10%)] mb-1">Add Ministers Name</h3>
               <p className="text-xs text-[hsl(0,0%,55%)] mb-4">
-                Enter Name and Title (Title is required if you uploaded a minister image)
+                Enter Name and Title (Title is optional)
               </p>
               <div
                 className="flex flex-col gap-3 md:h-[220px] lg:h-[210px] xl:h-[200px] md:overflow-y-auto md:pr-6 ministers-scroll"
@@ -223,18 +223,18 @@ const CreateDesignStep2 = () => {
                         placeholder={minister.placeholderName}
                         value={minister.name}
                         onChange={(e) => handleMinisterChange(minister.id, "name", e.target.value)}
-                        className="w-full lg:flex-1 border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(330,100%,80%)] transition-colors bg-white min-w-0"
+                        className={`w-full lg:flex-1 border rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none transition-colors bg-white min-w-0 ${
+                          didContinue && !minister.name.trim()
+                            ? "border-[hsl(15,100%,55%)] focus:border-[hsl(15,100%,55%)]"
+                            : "border-[hsl(0,0%,85%)] focus:border-[hsl(330,100%,80%)]"
+                        }`}
                       />
                       <input
                         type="text"
                         placeholder={minister.placeholderTitle}
                         value={minister.title}
                         onChange={(e) => handleMinisterChange(minister.id, "title", e.target.value)}
-                        className={`w-[70%] sm:w-[60%] lg:w-[25%] min-w-[160px] border rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none transition-colors bg-white ${
-                          didContinue && !minister.title.trim()
-                            ? "border-[hsl(15,100%,55%)] focus:border-[hsl(15,100%,55%)]"
-                            : "border-[hsl(0,0%,85%)] focus:border-[hsl(330,100%,80%)]"
-                        }`}
+                        className="w-[70%] sm:w-[60%] lg:w-[25%] min-w-[160px] border border-[hsl(0,0%,85%)] rounded-xl px-4 py-3.5 text-xs text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,70%)] outline-none focus:border-[hsl(330,100%,80%)] transition-colors bg-white"
                       />
                     </div>
                     <button
@@ -248,9 +248,9 @@ const CreateDesignStep2 = () => {
                 ))}
               </div>
 
-              {didContinue && missingMinisterTitle ? (
+              {didContinue && missingMinisterName ? (
                 <div className="mt-3 text-xs text-[hsl(15,100%,45%)]">
-                  Please enter a Title/Role for each uploaded minister image to continue.
+                  Please enter a Name for each uploaded minister image to continue.
                 </div>
               ) : null}
 

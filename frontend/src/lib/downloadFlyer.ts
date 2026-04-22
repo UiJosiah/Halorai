@@ -14,7 +14,7 @@ function base64ToBytes(base64: string) {
 }
 
 function bytesToBlob(bytes: Uint8Array, mimeType: string) {
-  return new Blob([bytes], { type: mimeType });
+  return new Blob([bytes as unknown as BlobPart], { type: mimeType });
 }
 
 async function blobToImageSize(blob: Blob): Promise<{ width: number; height: number }> {
@@ -119,6 +119,6 @@ export async function downloadFlyer(opts: {
   page.drawImage(img, { x: 0, y: 0, width, height });
 
   const pdfBytes = await pdf.save();
-  triggerDownload(new Blob([pdfBytes], { type: "application/pdf" }), `${base}.pdf`);
+  triggerDownload(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }), `${base}.pdf`);
 }
 
