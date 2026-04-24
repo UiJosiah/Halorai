@@ -233,17 +233,20 @@ const CreateDesignStep5 = () => {
               </div>
             </div>
 
-            {/* Middle Column - Design Preview (Instagram-style 4:5 portrait) */}
-            <div className="flex items-center justify-center">
-              <div className="relative w-full max-w-[280px] aspect-[4/5] overflow-hidden rounded-xl bg-[hsl(0,0%,94%)] ring-1 ring-[hsl(0,0%,92%)]">
+            {/* Middle Column — flyer preview: scales with screen size */}
+            <div className="flex min-h-0 items-center justify-center px-2">
+              <div className="inline-flex max-w-full items-center justify-center overflow-hidden rounded-xl bg-[hsl(0,0%,94%)] ring-1 ring-[hsl(0,0%,92%)]">
                 {flyerImage ? (
                   <img
                     src={`data:${flyerImage.mimeType};base64,${flyerImage.base64}`}
                     alt="Design Preview"
-                    className="absolute inset-0 h-full w-full object-cover"
+                    className="block max-w-full w-auto h-auto max-h-[min(75vh,640px)] object-contain"
                   />
                 ) : (
-                  <div className="absolute inset-0 bg-transparent" aria-label="Design preview loading" />
+                  <div
+                    className="aspect-[4/5] w-full min-w-[240px] sm:min-w-[280px] md:min-w-[320px] lg:min-w-[380px] xl:min-w-[440px] bg-transparent"
+                    aria-label="Design preview loading"
+                  />
                 )}
               </div>
             </div>
@@ -285,11 +288,11 @@ const CreateDesignStep5 = () => {
                 </div>
               ) : null}
 
-              <div className="w-full max-w-[420px] flex items-center gap-4 mt-4">
+              <div className="w-full max-w-[420px] flex items-center gap-5 mt-4">
                 <button
                   disabled={!canGenerate || isPreparing || !hasMessage}
                   onClick={() => void handleEdit()}
-                  className={`flex-1 flex items-center justify-center gap-2 border rounded-full px-6 py-3 text-sm font-regular transition-colors ${
+                  className={`flex items-center justify-center gap-2 border rounded-full px-6 py-3 text-sm font-regular transition-colors w-[140px] ${
                     !canGenerate || isPreparing || !hasMessage
                       ? "bg-[hsl(0,0%,97%)] border-[hsl(0,0%,95%)] text-[hsl(0,0%,40%)] cursor-not-allowed"
                       : "bg-[hsl(0,0%,97%)] border-[hsl(0,0%,95%)] text-[hsl(0,0%,10%)] cursor-pointer hover:border-[hsl(0,0%,60%)]"

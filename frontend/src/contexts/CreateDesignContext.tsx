@@ -74,7 +74,7 @@ type CreateDesignState = {
   flyerImage: FlyerImage | null;
   setFlyerImage: (next: FlyerImage | null) => void;
 
-  /** Step 3ii: AI-generated background preview (9:16), not the final flyer. */
+  /** Step 3ii: AI-generated background preview (4:5 portrait), not the final flyer. */
   backgroundPreviewImage: FlyerImage | null;
   setBackgroundPreviewImage: (next: FlyerImage | null) => void;
   backgroundPreviewKey: string;

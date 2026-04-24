@@ -137,7 +137,7 @@ export async function aiGenerateFlyer(payload: {
   concept?: string;
   message?: string;
   ministersMeta?: { name: string; title: string }[];
-  /** User-selected 9:16 background from Step 3ii (required for flyer composition). */
+  /** User-selected 4:5 background from Step 3ii (required for flyer composition). */
   backgroundImage: File;
   logos?: File[];
   ministers?: File[];

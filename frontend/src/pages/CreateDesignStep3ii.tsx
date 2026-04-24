@@ -61,6 +61,55 @@ function sendRefExtra(insertFile: File | null, includeCurrentBackground: boolean
 
 type BackgroundHistoryEntry = { image: FlyerImage; key: string };
 
+type BgHistState = { entries: BackgroundHistoryEntry[]; index: number };
+
+/** Extend history from the latest snapshot, not from `index + 1`, so a new gen never drops versions when index < tip. */
+function buildNextBackgroundHist(h: BgHistState, image: FlyerImage, key: string): { next: BgHistState; changed: boolean } {
+  if (h.entries.length === 0) {
+    return { next: { entries: [{ image, key }], index: 0 }, changed: true };
+  }
+  const tip = Math.max(0, h.entries.length - 1);
+  const end = Math.max(h.index, tip);
+  const truncated = h.entries.slice(0, end + 1);
+  const last = truncated[truncated.length - 1];
+  if (last && last.image.base64 === image.base64 && last.key === key) {
+    return { next: h, changed: false };
+  }
+  const entries = [...truncated, { image, key }];
+  return { next: { entries, index: entries.length - 1 }, changed: true };
+}
+
+/** First auto-gen + two edits = 3 AI images max for this concept/theme on Step 3ii. */
+const MAX_BG_GENERATIONS = 3;
+
+const LS_STEP3II_BG_GEN_COUNT = "createDesign_step3ii_backgroundGenCount_v1";
+
+function loadStep3iiGenCount(baseKey: string): number {
+  try {
+    const raw = localStorage.getItem(LS_STEP3II_BG_GEN_COUNT);
+    if (!raw) return 0;
+    const o = JSON.parse(raw) as { baseKey?: unknown; count?: unknown };
+    if (typeof o?.baseKey === "string" && o.baseKey === baseKey && typeof o.count === "number") {
+      const n = Math.floor(o.count);
+      if (!Number.isFinite(n)) return 0;
+      return Math.max(0, Math.min(MAX_BG_GENERATIONS, n));
+    }
+  } catch {
+    /* ignore */
+  }
+  return 0;
+}
+
+function saveStep3iiGenCount(baseKey: string, count: number): void {
+  try {
+    const n = Math.max(0, Math.min(MAX_BG_GENERATIONS, Math.floor(count)));
+    if (!Number.isFinite(n)) return;
+    localStorage.setItem(LS_STEP3II_BG_GEN_COUNT, JSON.stringify({ baseKey, count: n }));
+  } catch {
+    /* ignore */
+  }
+}
+
 async function fileToRef(file: File): Promise<AiImageReference> {
   const mimeType = file.type || "image/png";
   const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -115,16 +164,24 @@ const CreateDesignStep3ii = () => {
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const inFlightRef = useRef(false);
+  const baseCacheKey = useMemo(() => cacheKey(concept, theme, "", ""), [concept, theme]);
+  const [generationsUsed, setGenerationsUsed] = useState(() => loadStep3iiGenCount(baseCacheKey));
+  const generationsUsedRef = useRef(0);
+  generationsUsedRef.current = generationsUsed;
+  const editsRemaining = Math.max(0, MAX_BG_GENERATIONS - generationsUsed);
+
+  useEffect(() => {
+    saveStep3iiGenCount(baseCacheKey, generationsUsed);
+  }, [baseCacheKey, generationsUsed]);
 
   /** Snapshots of successful generations for back/forward within this step. */
-  const [bgHist, setBgHist] = useState<{ entries: BackgroundHistoryEntry[]; index: number }>({
+  const [bgHist, setBgHist] = useState<BgHistState>({
     entries: [],
     index: -1,
   });
   const bgHistRef = useRef(bgHist);
   bgHistRef.current = bgHist;
 
-  const baseCacheKey = useMemo(() => cacheKey(concept, theme, "", ""), [concept, theme]);
   const prevBaseCacheKeyRef = useRef<string | null>(null);
   /** Prevents context-hydration effect from racing with append after a new generation. */
   const historyInitFromContextRef = useRef(false);
@@ -138,37 +195,27 @@ const CreateDesignStep3ii = () => {
       prevBaseCacheKeyRef.current = baseCacheKey;
       setBgHist({ entries: [], index: -1 });
       historyInitFromContextRef.current = false;
+      const nextCount = loadStep3iiGenCount(baseCacheKey);
+      generationsUsedRef.current = nextCount;
+      setGenerationsUsed(nextCount);
     }
   }, [baseCacheKey]);
-
-  const appendToBackgroundHistory = useCallback((image: FlyerImage, key: string) => {
-    setBgHist((h) => {
-      const truncated = h.index >= 0 ? h.entries.slice(0, h.index + 1) : [];
-      const last = truncated[truncated.length - 1];
-      if (last?.key === key) {
-        return h;
-      }
-      historyInitFromContextRef.current = true;
-      const entries = [...truncated, { image, key }];
-      return { entries, index: entries.length - 1 };
-    });
-  }, []);
 
   /** Seed history once from context when a preview exists but nothing is in the stack yet (e.g. IDB). */
   useEffect(() => {
     if (historyInitFromContextRef.current) return;
     if (!backgroundPreviewImage?.base64 || !backgroundPreviewKey.trim()) return;
-    setBgHist((h) => {
-      if (h.entries.length > 0) {
-        historyInitFromContextRef.current = true;
-        return h;
-      }
+    if (bgHistRef.current.entries.length > 0) {
       historyInitFromContextRef.current = true;
-      return {
-        entries: [{ image: backgroundPreviewImage, key: backgroundPreviewKey }],
-        index: 0,
-      };
+      return;
+    }
+    historyInitFromContextRef.current = true;
+    setBgHist({
+      entries: [{ image: backgroundPreviewImage, key: backgroundPreviewKey }],
+      index: 0,
     });
+    generationsUsedRef.current = Math.max(generationsUsedRef.current, 1);
+    setGenerationsUsed((u) => Math.max(u, 1));
   }, [backgroundPreviewImage, backgroundPreviewKey]);
 
   useEffect(() => {
@@ -180,6 +227,10 @@ const CreateDesignStep3ii = () => {
   const runGeneration = useCallback(
     async (refinement: string, requestKey: string, referenceImages?: AiImageReference[]): Promise<boolean> => {
       if (!concept.trim() || inFlightRef.current) return false;
+      if (generationsUsedRef.current >= MAX_BG_GENERATIONS) {
+        setError("You have used all background generations for this concept. Continue or go back to change the concept.");
+        return false;
+      }
       inFlightRef.current = true;
       setIsGenerating(true);
       setError("");
@@ -200,7 +251,14 @@ const CreateDesignStep3ii = () => {
         const nextImage = { mimeType: first.mimeType || "image/png", base64: first.base64 };
         setBackgroundPreviewImage(nextImage);
         setBackgroundPreviewKey(requestKey);
-        appendToBackgroundHistory(nextImage, requestKey);
+        const snap = bgHistRef.current;
+        const { next: nextHist, changed } = buildNextBackgroundHist(snap, nextImage, requestKey);
+        if (changed) {
+          historyInitFromContextRef.current = true;
+          setBgHist(nextHist);
+          generationsUsedRef.current += 1;
+          setGenerationsUsed(generationsUsedRef.current);
+        }
         return true;
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Generation failed.");
@@ -210,27 +268,39 @@ const CreateDesignStep3ii = () => {
         inFlightRef.current = false;
       }
     },
-    [appendToBackgroundHistory, concept, setBackgroundPreviewImage, setBackgroundPreviewKey, theme]
+    [concept, setBackgroundPreviewImage, setBackgroundPreviewKey, theme]
   );
 
-  // Auto-generate only the canonical background for this concept+theme, without clobbering user refinements
-  // (same concept+theme, any refinement key).
+  // Auto-generate only when we still need a base image for this concept+theme.
+  // Same concept+theme must never re-run AI (refinements use different keys but same c,t).
+  // If `backgroundPreviewKey` is empty or not JSON, `stored` is null — we must still skip when a preview
+  // exists, otherwise history navigation (back/forward) would look like "Revert calls AI again".
   useEffect(() => {
     if (!assetsHydrated || !concept.trim()) return;
+    if (generationsUsedRef.current >= MAX_BG_GENERATIONS) return;
+    const hist = bgHistRef.current;
+    // Revert/forward only change which snapshot is shown — never treat that as "missing image" and auto-call AI.
+    if (hist.entries.length > 0 && (hist.index < 0 || hist.index < hist.entries.length - 1)) return;
     const baseParts = parseCacheKey(baseCacheKey);
     const stored = backgroundPreviewKey ? parseCacheKey(backgroundPreviewKey) : null;
-    if (backgroundPreviewImage && baseParts && stored && stored.c === baseParts.c && stored.t === baseParts.t) {
-      return;
-    }
+    const havePreview = !!backgroundPreviewImage?.base64?.trim();
+    const sameConceptTheme =
+      havePreview &&
+      !!baseParts &&
+      (!stored || (stored.c === baseParts.c && stored.t === baseParts.t));
+    if (sameConceptTheme) return;
     void runGeneration("", baseCacheKey);
   }, [assetsHydrated, backgroundPreviewImage, backgroundPreviewKey, baseCacheKey, concept, runGeneration]);
 
   /** Text only, image only, or both; image-only requires a current AI preview to revise. */
+  const atGenerationLimit = generationsUsed >= MAX_BG_GENERATIONS;
   const canSend =
-    (message.trim().length > 0 || !!chatInsertImage) && (!chatInsertImage || !!backgroundPreviewImage);
+    !atGenerationLimit &&
+    (message.trim().length > 0 || !!chatInsertImage) &&
+    (!chatInsertImage || !!backgroundPreviewImage);
 
   const handleSendRefinement = async () => {
-    if (!canSend || !assetsHydrated || isGenerating) return;
+    if (!canSend || !assetsHydrated || isGenerating || atGenerationLimit) return;
     const refinement = message.trim();
     const includeBg = !!backgroundPreviewImage;
     const extra = sendRefExtra(chatInsertImage, includeBg);
@@ -257,7 +327,7 @@ const CreateDesignStep3ii = () => {
 
   const handleHistoryBack = () => {
     const h = bgHistRef.current;
-    if (isGenerating || !assetsHydrated || h.entries.length === 0 || h.index <= 0) return;
+    if (isGenerating || !assetsHydrated || h.entries.length <= 1 || h.index <= 0) return;
     const ni = h.index - 1;
     const e = h.entries[ni];
     setBackgroundPreviewImage(e.image);
@@ -267,7 +337,7 @@ const CreateDesignStep3ii = () => {
 
   const handleHistoryForward = () => {
     const h = bgHistRef.current;
-    if (isGenerating || !assetsHydrated || h.index >= h.entries.length - 1) return;
+    if (isGenerating || !assetsHydrated || h.entries.length <= 1 || h.index >= h.entries.length - 1) return;
     const ni = h.index + 1;
     const e = h.entries[ni];
     setBackgroundPreviewImage(e.image);
@@ -352,8 +422,10 @@ const CreateDesignStep3ii = () => {
                     <button
                       type="button"
                       aria-label="Previous generated background"
-                      title="Previous generated version"
-                      disabled={isGenerating || !assetsHydrated || bgHist.index <= 0}
+                      title="Previous version (no new AI call)"
+                      disabled={
+                        isGenerating || !assetsHydrated || bgHist.entries.length <= 1 || bgHist.index <= 0
+                      }
                       onClick={handleHistoryBack}
                       className="cursor-pointer border-none bg-transparent p-1 transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -362,9 +434,13 @@ const CreateDesignStep3ii = () => {
                     <button
                       type="button"
                       aria-label="Next generated background"
-                      title="Next generated version"
+                      title="Next version (no new AI call)"
                       disabled={
-                        isGenerating || !assetsHydrated || bgHist.index < 0 || bgHist.index >= bgHist.entries.length - 1
+                        isGenerating ||
+                        !assetsHydrated ||
+                        bgHist.entries.length <= 1 ||
+                        bgHist.index < 0 ||
+                        bgHist.index >= bgHist.entries.length - 1
                       }
                       onClick={handleHistoryForward}
                       className="cursor-pointer border-none bg-transparent p-1 transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
@@ -426,8 +502,9 @@ const CreateDesignStep3ii = () => {
                   {error}
                   <button
                     type="button"
+                    disabled={atGenerationLimit}
                     onClick={() => void runGeneration("", baseCacheKey)}
-                    className="ml-3 rounded-full border-none bg-[hsl(0,0%,10%)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[hsl(0,0%,25%)]"
+                    className="ml-3 rounded-full border-none bg-[hsl(0,0%,10%)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[hsl(0,0%,25%)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Retry
                   </button>
@@ -440,8 +517,15 @@ const CreateDesignStep3ii = () => {
               <h2 className="text-lg md:text-xl font-bold text-[hsl(0,0%,10%)] mb-2">
                 Edit Background Concept
               </h2>
-              <p className="text-sm text-[hsl(0,0%,55%)] mb-6 max-w-[420px]">
+              <p className="text-sm text-[hsl(0,0%,55%)] mb-2 max-w-[420px]">
                 Prompt it, edit it, upload images, and shape the background exactly how you imagine it
+              </p>
+
+              {/* Text to show generation limit */}
+              <p className="mb-4 text-xs text-[hsl(0,0%,45%)] max-w-[420px]">
+                {atGenerationLimit
+                  ? "You have used all 3 background generations (first load + 2 edits). Use the arrows on the preview to review versions, or Continue."
+                  : `${editsRemaining} generation${editsRemaining === 1 ? "" : "s"} left for this concept (first image + up to 2 edits).`}
               </p>
 
               {/* Chat-style textarea + single insert image */}
@@ -478,15 +562,16 @@ const CreateDesignStep3ii = () => {
                   <textarea
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
+                    disabled={atGenerationLimit}
                     placeholder="e.g A wall of fire... add fire sparks, flames"
-                    className="min-h-[120px] w-full flex-1 resize-none border-none bg-transparent text-sm text-[hsl(0,0%,10%)] outline-none placeholder:text-[hsl(0,0%,55%)]"
+                    className="min-h-[120px] w-full flex-1 resize-none border-none bg-transparent text-sm text-[hsl(0,0%,10%)] outline-none placeholder:text-[hsl(0,0%,55%)] disabled:cursor-not-allowed disabled:opacity-70"
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-end gap-3">
                   <button
                     type="button"
                     title="Insert one image (reference for the AI)"
-                    disabled={isGenerating || !assetsHydrated}
+                    disabled={atGenerationLimit || isGenerating || !assetsHydrated}
                     onClick={() => chatInsertInputRef.current?.click()}
                     className="cursor-pointer rounded-full border-none bg-white p-2 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -502,7 +587,7 @@ const CreateDesignStep3ii = () => {
                   </button>
                   <button
                     type="button"
-                    disabled={!canSend || !assetsHydrated || isGenerating}
+                    disabled={!canSend || !assetsHydrated || isGenerating || atGenerationLimit}
                     onClick={() => void handleSendRefinement()}
                     className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-black transition-colors hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
                   >

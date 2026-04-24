@@ -136,11 +136,12 @@ def generate_flyer_image_base64(
   model: str,
   *,
   reference_images_bytes: Sequence[tuple[bytes, str]],
-  aspect_ratio: Optional[str] = "9:16",
+  aspect_ratio: Optional[str] = "4:5",
   number_of_images: int = 1,
 ) -> List[Dict[str, Any]]:
   """
   Prompt + reference images (raw bytes) -> generated image(s) (base64).
+  Default 4:5 matches Step 3ii background generation.
   """
   if not prompt or not str(prompt).strip():
     raise ValueError("prompt is required")

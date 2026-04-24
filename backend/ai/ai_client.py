@@ -193,6 +193,7 @@ def generate_flyer_image_base64(
       prompt=prompt,
       model=_openai_model_or_default(model),
       reference_images_bytes=reference_images_bytes,
+      aspect_ratio=aspect_ratio,
       number_of_images=number_of_images,
     )
 
@@ -217,6 +218,7 @@ def generate_flyer_image_base64(
         prompt=prompt,
         model=_openai_model_or_default(model),
         reference_images_bytes=reference_images_bytes,
+        aspect_ratio=aspect_ratio,
         number_of_images=number_of_images,
       )
     except Exception as e:

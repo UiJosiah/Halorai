@@ -172,10 +172,10 @@ const CreateDesignStep4 = () => {
               </div>
             </div>
 
-            {/* Background preview (image from Step 3ii) */}
-            <div className="flex h-full min-h-0 flex-col">
+            {/* Background preview — same 4:5 frame as Step 3ii (do not stretch to match ministers column or the image crops) */}
+            <div className="flex h-full min-h-0 flex-col md:items-start">
               <h3 className="mb-3 shrink-0 text-sm font-semibold text-[hsl(0,0%,10%)]">Background Concept</h3>
-              <div className="relative min-h-[220px] flex-1 overflow-hidden rounded-xl border border-[hsl(0,0%,85%)] bg-[hsl(0,0%,92%)] ring-1 ring-[hsl(0,0%,90%)]">
+              <div className="relative mx-auto aspect-[4/5] w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-xl border border-[hsl(0,0%,85%)] bg-[hsl(0,0%,92%)] ring-1 ring-[hsl(0,0%,90%)] md:mx-0">
                 {backgroundPreviewImage ? (
                   <img
                     src={`data:${backgroundPreviewImage.mimeType};base64,${backgroundPreviewImage.base64}`}
@@ -183,7 +183,7 @@ const CreateDesignStep4 = () => {
                     className="absolute inset-0 h-full w-full object-cover"
                   />
                 ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+                  <div className="absolute inset-0 flex min-h-[11rem] flex-col items-center justify-center gap-2 px-4 text-center">
                     <p className="text-xs text-[hsl(0,0%,45%)]">No background image yet.</p>
                     <button
                       type="button"

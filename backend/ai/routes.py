@@ -345,7 +345,7 @@ def ai_flyer():
   - message: string (optional; edit instructions)
 
   Files:
-  - backgroundImage: required — user-selected 9:16 background from Step 3ii (image bytes)
+  - backgroundImage: required — user-selected 4:5 background from Step 3ii (image bytes)
   - logos: multiple image files (0-2)
   - ministers: multiple image files
   """
@@ -423,7 +423,7 @@ def ai_flyer():
 
   bg_file = request.files.get("backgroundImage")
   if not bg_file:
-    return _json_error("backgroundImage is required (the user-selected 9:16 background from Step 3ii).", 400)
+    return _json_error("backgroundImage is required (the user-selected 4:5 background from Step 3ii).", 400)
   bg_bytes = bg_file.read()
   if not bg_bytes:
     return _json_error("backgroundImage is empty.", 400)
@@ -437,7 +437,7 @@ def ai_flyer():
     "REFERENCE IMAGE ORDER (STRICT — DO NOT MIX OR SWAP):",
     "The model receives reference images in this exact 1-based order. Each index maps to exactly one use.",
     "",
-    "- Reference image #1: USER-SELECTED BACKGROUND (9:16).",
+    "- Reference image #1: USER-SELECTED BACKGROUND (4:5 portrait, same as Instagram portrait).",
     "  This is the real flyer background artwork. Preserve its scene, colors, lighting, and mood.",
     "  Do NOT replace it with a newly invented background. Do NOT paste the template (image #2) over it as the scene.",
     "  Composite all text, logos, and minister portraits ON TOP of this background only.",
@@ -506,7 +506,7 @@ def ai_flyer():
     "GOAL:",
     "Start from the user’s chosen background (reference #1).",
     "Use the template (reference #2) only as a map for where to place text, logos, and minister photos.",
-    "Output one 9:16 flyer that keeps the background artwork and adds correct event details and assets.",
+    "Output one 4:5 portrait flyer (same aspect ratio as reference #1) that keeps the background artwork and adds correct event details and assets.",
     "",
     "INPUTS:",
     "- Event details (title, date, time, venue, theme, other info)",
@@ -523,7 +523,7 @@ def ai_flyer():
     "",
     "WHAT TO PRESERVE (STRICT):",
     "- The background from reference #1 (scene, palette, lighting, atmosphere).",
-    "- Overall 9:16 framing.",
+    "- Overall 4:5 framing (match reference #1 width-to-height).",
     "",
     "----------------------------------",
     "",
@@ -579,7 +579,7 @@ def ai_flyer():
     "4. Polish integration (shadows, readability)",
     "",
     "OUTPUT:",
-    "- Single clean flyer image, aspect ratio 9:16.",
+    "- Single clean flyer image, aspect ratio 4:5 (must match reference #1).",
     "",
     "----------------------------------",
     "",
@@ -615,7 +615,9 @@ def ai_flyer():
     pass
 
   try:
-    images = generate_flyer_image_base64(prompt=prompt, model=model, reference_images_bytes=refs, aspect_ratio="9:16", number_of_images=1)
+    images = generate_flyer_image_base64(
+      prompt=prompt, model=model, reference_images_bytes=refs, aspect_ratio="4:5", number_of_images=1
+    )
   except Exception as e:
     status, msg = _ai_exception_to_http(e)
     ai_logger.exception(

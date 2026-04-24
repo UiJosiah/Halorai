@@ -31,6 +31,22 @@ def _preferred_flyer_model() -> str:
   return (os.environ.get("OPENAI_FLYER_MODEL") or "").strip() or _preferred_image_model()
 
 
+def _openai_image_edit_size(*, aspect_ratio: Optional[str]) -> str:
+  """
+  Images edit API only allows 1024x1024, 1024x1536, 1536x1024, or auto.
+  Step 3ii backgrounds are 4:5; use auto so output can align with reference framing.
+  """
+  ar = (aspect_ratio or "4:5").strip()
+  if ar in ("9:16", "2:3", "3:4"):
+    return "1024x1536"
+  if ar in ("16:9", "4:3", "3:2"):
+    return "1536x1024"
+  if ar in ("1:1", "1024x1024"):
+    return "1024x1024"
+  # 4:5 and unknown: prefer auto over 1024x1536 (taller than 4:5, looked "too long" to users).
+  return "auto"
+
+
 class ReferenceImage(TypedDict, total=False):
   mimeType: str
   base64: str
@@ -156,6 +172,7 @@ def generate_flyer_image_base64(
   model: Optional[str] = None,
   *,
   reference_images_bytes: Sequence[tuple[bytes, str]],
+  aspect_ratio: Optional[str] = None,
   number_of_images: int = 1,
   output_format: str = "png",
   input_fidelity: str = "high",
@@ -187,12 +204,13 @@ def generate_flyer_image_base64(
   if not files:
     raise ValueError("reference images had no usable bytes")
 
+  size = _openai_image_edit_size(aspect_ratio=aspect_ratio)
   res = _client().images.edit(
     model=m,
     image=files[:16],
     prompt=str(prompt),
     n=n,
-    size="1024x1536",
+    size=size,
     input_fidelity=input_fidelity,
     output_format=output_format,
   )
