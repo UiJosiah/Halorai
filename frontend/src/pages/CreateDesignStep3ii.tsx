@@ -4,7 +4,13 @@ import AppLayout from "@/components/AppLayout";
 import CreateDesignHero from "@/components/CreateDesignHero";
 import StepperProgress from "@/components/StepperProgress";
 import { useCreateDesign, type FlyerImage } from "@/contexts/CreateDesignContext";
-import { aiGenerateImage, type AiImageReference } from "@/lib/api";
+import {
+  aiGenerateImage,
+  blendBackgroundImage,
+  type AiImageReference,
+  type BlendMode,
+  type FlyerImagePayload,
+} from "@/lib/api";
 import { downloadFlyer } from "@/lib/downloadFlyer";
 import ArcLoader from "@/components/ArcLoader";
 
@@ -59,14 +65,54 @@ function sendRefExtra(insertFile: File | null, includeCurrentBackground: boolean
   return JSON.stringify({ p: includeCurrentBackground ? 1 : 0, a });
 }
 
-type BackgroundHistoryEntry = { image: FlyerImage; key: string };
+/** Encode each path segment so spaces in `/Halorai Dev/...` fetch correctly. */
+function encodeAssetPathForFetch(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const segs = p.split("/").filter(Boolean);
+  return `/${segs.map(encodeURIComponent).join("/")}`;
+}
+
+async function fetchImageAsFlyerImage(assetPath: string): Promise<FlyerImagePayload> {
+  const res = await fetch(encodeAssetPathForFetch(assetPath));
+  if (!res.ok) throw new Error(`Could not load base colour image (${res.status})`);
+  const blob = await res.blob();
+  const mimeType = blob.type || "image/jpeg";
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+  const comma = dataUrl.indexOf(",");
+  const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  return { mimeType, base64 };
+}
+
+const BLEND_MODE_OPTIONS: { value: BlendMode; label: string }[] = [
+  { value: "overlay", label: "Overlay" },
+  { value: "soft_light", label: "Soft Light" },
+  { value: "multiply", label: "Multiply" },
+  { value: "screen", label: "Screen" },
+  { value: "difference", label: "Difference" },
+  { value: "luminosity", label: "Luminosity" },
+];
+
+type BackgroundHistoryEntry = { image: FlyerImage; key: string; rawAi?: FlyerImage };
 
 type BgHistState = { entries: BackgroundHistoryEntry[]; index: number };
 
 /** Extend history from the latest snapshot, not from `index + 1`, so a new gen never drops versions when index < tip. */
-function buildNextBackgroundHist(h: BgHistState, image: FlyerImage, key: string): { next: BgHistState; changed: boolean } {
+function buildNextBackgroundHist(
+  h: BgHistState,
+  image: FlyerImage,
+  key: string,
+  rawAi?: FlyerImage
+): { next: BgHistState; changed: boolean } {
   if (h.entries.length === 0) {
-    return { next: { entries: [{ image, key }], index: 0 }, changed: true };
+    return {
+      next: { entries: [{ image, key, ...(rawAi ? { rawAi } : {}) }], index: 0 },
+      changed: true,
+    };
   }
   const tip = Math.max(0, h.entries.length - 1);
   const end = Math.max(h.index, tip);
@@ -75,7 +121,7 @@ function buildNextBackgroundHist(h: BgHistState, image: FlyerImage, key: string)
   if (last && last.image.base64 === image.base64 && last.key === key) {
     return { next: h, changed: false };
   }
-  const entries = [...truncated, { image, key }];
+  const entries = [...truncated, { image, key, ...(rawAi ? { rawAi } : {}) }];
   return { next: { entries, index: entries.length - 1 }, changed: true };
 }
 
@@ -134,6 +180,7 @@ const CreateDesignStep3ii = () => {
     backgroundPreviewKey,
     setBackgroundPreviewKey,
     setBackgroundRefinementNotes,
+    baseColourChoice,
   } = useCreateDesign();
 
   const theme = eventDetails.theme?.trim() || "";
@@ -160,10 +207,15 @@ const CreateDesignStep3ii = () => {
   }, [chatInsertPreviewUrl]);
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [blendMode, setBlendMode] = useState<BlendMode>("soft_light");
+  const [blendOpacity, setBlendOpacity] = useState(0.45);
+  const [isBlending, setIsBlending] = useState(false);
   const [error, setError] = useState("");
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const inFlightRef = useRef(false);
+  /** Last raw AI output for this history tip — required so blend tweaks don't stack on an already-blended image. */
+  const rawAiImageRef = useRef<FlyerImage | null>(null);
   const baseCacheKey = useMemo(() => cacheKey(concept, theme, "", ""), [concept, theme]);
   const [generationsUsed, setGenerationsUsed] = useState(() => loadStep3iiGenCount(baseCacheKey));
   const generationsUsedRef = useRef(0);
@@ -193,6 +245,7 @@ const CreateDesignStep3ii = () => {
     }
     if (prevBaseCacheKeyRef.current !== baseCacheKey) {
       prevBaseCacheKeyRef.current = baseCacheKey;
+      rawAiImageRef.current = null;
       setBgHist({ entries: [], index: -1 });
       historyInitFromContextRef.current = false;
       const nextCount = loadStep3iiGenCount(baseCacheKey);
@@ -224,6 +277,62 @@ const CreateDesignStep3ii = () => {
     }
   }, [concept, navigate]);
 
+  const shouldBlendSwatch = useMemo(
+    () => typeof baseColourChoice === "string" && baseColourChoice.startsWith("/Halorai Dev/Base-colours/"),
+    [baseColourChoice]
+  );
+
+  const applySwatchBlend = useCallback(
+    async (conceptImage: FlyerImage): Promise<FlyerImage> => {
+      if (!shouldBlendSwatch) return conceptImage;
+      const swatch = await fetchImageAsFlyerImage(baseColourChoice as string);
+      const out = await blendBackgroundImage({
+        baseImage: swatch,
+        conceptImage: { mimeType: conceptImage.mimeType, base64: conceptImage.base64 },
+        mode: blendMode,
+        opacity: blendOpacity,
+      });
+      return { mimeType: out.mimeType, base64: out.base64 };
+    },
+    [baseColourChoice, blendMode, blendOpacity, shouldBlendSwatch]
+  );
+
+  const reblendFromRaw = useCallback(async () => {
+    const raw = rawAiImageRef.current;
+    if (!shouldBlendSwatch || !raw?.base64?.trim()) return;
+    setIsBlending(true);
+    setError("");
+    try {
+      const blended = await applySwatchBlend(raw);
+      setBackgroundPreviewImage(blended);
+      setBgHist((prev) => {
+        if (prev.index < 0 || prev.index >= prev.entries.length) return prev;
+        const entries = [...prev.entries];
+        entries[prev.index] = { ...entries[prev.index], image: blended };
+        return { ...prev, entries };
+      });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Colour blend failed.");
+    } finally {
+      setIsBlending(false);
+    }
+  }, [applySwatchBlend, setBackgroundPreviewImage, shouldBlendSwatch]);
+
+  /** Slider / mode changes re-run blend on raw AI (debounced). Omit isGenerating so finishing a gen doesn't fire a duplicate blend. */
+  useEffect(() => {
+    if (!shouldBlendSwatch) return;
+    if (!rawAiImageRef.current?.base64?.trim()) return;
+    const t = window.setTimeout(() => {
+      void reblendFromRaw();
+    }, 280);
+    return () => window.clearTimeout(t);
+  }, [blendMode, blendOpacity, reblendFromRaw, shouldBlendSwatch]);
+
+  useEffect(() => {
+    const e = bgHist.entries[bgHist.index];
+    if (e?.rawAi) rawAiImageRef.current = e.rawAi;
+  }, [bgHist]);
+
   const runGeneration = useCallback(
     async (refinement: string, requestKey: string, referenceImages?: AiImageReference[]): Promise<boolean> => {
       if (!concept.trim() || inFlightRef.current) return false;
@@ -248,11 +357,20 @@ const CreateDesignStep3ii = () => {
           setError("No background image returned. Try again.");
           return false;
         }
-        const nextImage = { mimeType: first.mimeType || "image/png", base64: first.base64 };
+        const raw: FlyerImage = { mimeType: first.mimeType || "image/png", base64: first.base64 };
+        rawAiImageRef.current = raw;
+        let nextImage = raw;
+        if (shouldBlendSwatch) {
+          try {
+            nextImage = await applySwatchBlend(raw);
+          } catch (be: unknown) {
+            setError(be instanceof Error ? be.message : "Colour blend failed. Showing AI image only.");
+          }
+        }
         setBackgroundPreviewImage(nextImage);
         setBackgroundPreviewKey(requestKey);
         const snap = bgHistRef.current;
-        const { next: nextHist, changed } = buildNextBackgroundHist(snap, nextImage, requestKey);
+        const { next: nextHist, changed } = buildNextBackgroundHist(snap, nextImage, requestKey, raw);
         if (changed) {
           historyInitFromContextRef.current = true;
           setBgHist(nextHist);
@@ -268,8 +386,13 @@ const CreateDesignStep3ii = () => {
         inFlightRef.current = false;
       }
     },
-    [concept, setBackgroundPreviewImage, setBackgroundPreviewKey, theme]
+    [applySwatchBlend, concept, setBackgroundPreviewImage, setBackgroundPreviewKey, shouldBlendSwatch, theme]
   );
+
+  const handleApplyBlendOnly = useCallback(() => {
+    if (!shouldBlendSwatch || isBlending || isGenerating) return;
+    void reblendFromRaw();
+  }, [isBlending, isGenerating, reblendFromRaw, shouldBlendSwatch]);
 
   // Auto-generate only when we still need a base image for this concept+theme.
   // Same concept+theme must never re-run AI (refinements use different keys but same c,t).
@@ -296,11 +419,12 @@ const CreateDesignStep3ii = () => {
   const atGenerationLimit = generationsUsed >= MAX_BG_GENERATIONS;
   const canSend =
     !atGenerationLimit &&
+    !isBlending &&
     (message.trim().length > 0 || !!chatInsertImage) &&
     (!chatInsertImage || !!backgroundPreviewImage);
 
   const handleSendRefinement = async () => {
-    if (!canSend || !assetsHydrated || isGenerating || atGenerationLimit) return;
+    if (!canSend || !assetsHydrated || isGenerating || isBlending || atGenerationLimit) return;
     const refinement = message.trim();
     const includeBg = !!backgroundPreviewImage;
     const extra = sendRefExtra(chatInsertImage, includeBg);
@@ -327,7 +451,7 @@ const CreateDesignStep3ii = () => {
 
   const handleHistoryBack = () => {
     const h = bgHistRef.current;
-    if (isGenerating || !assetsHydrated || h.entries.length <= 1 || h.index <= 0) return;
+    if (isGenerating || isBlending || !assetsHydrated || h.entries.length <= 1 || h.index <= 0) return;
     const ni = h.index - 1;
     const e = h.entries[ni];
     setBackgroundPreviewImage(e.image);
@@ -337,7 +461,8 @@ const CreateDesignStep3ii = () => {
 
   const handleHistoryForward = () => {
     const h = bgHistRef.current;
-    if (isGenerating || !assetsHydrated || h.entries.length <= 1 || h.index >= h.entries.length - 1) return;
+    if (isGenerating || isBlending || !assetsHydrated || h.entries.length <= 1 || h.index >= h.entries.length - 1)
+      return;
     const ni = h.index + 1;
     const e = h.entries[ni];
     setBackgroundPreviewImage(e.image);
@@ -370,10 +495,16 @@ const CreateDesignStep3ii = () => {
   };
 
   useEffect(() => {
-    if (isGenerating || !backgroundPreviewImage) setIsDownloadOpen(false);
-  }, [isGenerating, backgroundPreviewImage]);
+    if (isGenerating || isBlending || !backgroundPreviewImage) setIsDownloadOpen(false);
+  }, [isBlending, isGenerating, backgroundPreviewImage]);
 
-  const showCenterLoader = !assetsHydrated || isGenerating || (!backgroundPreviewImage && !error);
+  const showCenterLoader =
+    !assetsHydrated || isGenerating || isBlending || (!backgroundPreviewImage && !error);
+
+  const hasRawAiForBlend = useMemo(() => {
+    if (bgHist.index < 0 || bgHist.index >= bgHist.entries.length) return false;
+    return !!bgHist.entries[bgHist.index]?.rawAi;
+  }, [bgHist.entries, bgHist.index]);
 
   return (
     <AppLayout>
@@ -410,7 +541,7 @@ const CreateDesignStep3ii = () => {
                             </span>
                           )
                         }
-                        spinning={!assetsHydrated || isGenerating}
+                        spinning={!assetsHydrated || isGenerating || isBlending}
                         spinDurationMs={2600}
                       />
                     </div>
@@ -424,7 +555,11 @@ const CreateDesignStep3ii = () => {
                       aria-label="Previous generated background"
                       title="Previous version (no new AI call)"
                       disabled={
-                        isGenerating || !assetsHydrated || bgHist.entries.length <= 1 || bgHist.index <= 0
+                        isGenerating ||
+                        isBlending ||
+                        !assetsHydrated ||
+                        bgHist.entries.length <= 1 ||
+                        bgHist.index <= 0
                       }
                       onClick={handleHistoryBack}
                       className="cursor-pointer border-none bg-transparent p-1 transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
@@ -437,6 +572,7 @@ const CreateDesignStep3ii = () => {
                       title="Next version (no new AI call)"
                       disabled={
                         isGenerating ||
+                        isBlending ||
                         !assetsHydrated ||
                         bgHist.entries.length <= 1 ||
                         bgHist.index < 0 ||
@@ -456,7 +592,7 @@ const CreateDesignStep3ii = () => {
                       <button
                         type="button"
                         title={isDownloading ? "Preparing download…" : "Download background"}
-                        disabled={!backgroundPreviewImage || isGenerating || isDownloading || !assetsHydrated}
+                        disabled={!backgroundPreviewImage || isGenerating || isBlending || isDownloading || !assetsHydrated}
                         onClick={() => setIsDownloadOpen((v) => !v)}
                         className="cursor-pointer border-none bg-transparent transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -514,6 +650,55 @@ const CreateDesignStep3ii = () => {
 
             {/* Right Column - Create Background Concept */}
             <div className="flex min-w-0 flex-col max-md:items-center max-md:w-full">
+
+              {shouldBlendSwatch ? (
+                <div className="mb-4 flex w-full max-w-[min(100%,28rem)] flex-col gap-3 rounded-xl border border-[hsl(0,0%,90%)] bg-[hsl(0,0%,98%)] p-4">
+                  <p className="text-xs font-medium text-[hsl(0,0%,35%)]">
+                    Base colour blend
+                  </p>
+                 
+                  <label className="flex flex-col gap-1 text-xs text-[hsl(0,0%,40%)]">
+                    Blend mode
+                    <select
+                      value={blendMode}
+                      disabled={isGenerating || isBlending || !hasRawAiForBlend}
+                      onChange={(e) => setBlendMode(e.target.value as BlendMode)}
+                      className="rounded-lg border border-[hsl(0,0%,85%)] bg-white px-2 py-2 text-sm text-[hsl(0,0%,15%)] outline-none disabled:opacity-50"
+                    >
+                      {BLEND_MODE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-[hsl(0,0%,40%)]">
+                    Intensity <span className="tabular-nums">{Math.round(blendOpacity * 100)}%</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round(blendOpacity * 100)}
+                      disabled={isGenerating || isBlending || !hasRawAiForBlend}
+                      onChange={(e) => setBlendOpacity(Number(e.target.value) / 100)}
+                      className="w-full accent-[hsl(330,100%,45%)] disabled:opacity-50"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!hasRawAiForBlend || isGenerating || isBlending}
+                    onClick={() => handleApplyBlendOnly()}
+                    className="self-start rounded-full border border-[hsl(0,0%,85%)] bg-white px-3 py-1.5 text-xs font-medium text-[hsl(0,0%,15%)] hover:bg-[hsl(0,0%,97%)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Apply blend now
+                  </button>
+                </div>
+              ) : baseColourChoice === "skip" ? (
+                <p className="mb-4 max-w-[420px] text-xs text-[hsl(0,0%,50%)]">
+                  Colour blend is off (you chose Skip on Step 3). The AI background is shown alone.
+                </p>
+              ) : null}
+
               <h2 className="text-lg md:text-xl font-bold text-[hsl(0,0%,10%)] mb-2">
                 Edit Background Concept
               </h2>
@@ -571,7 +756,7 @@ const CreateDesignStep3ii = () => {
                   <button
                     type="button"
                     title="Insert one image (reference for the AI)"
-                    disabled={atGenerationLimit || isGenerating || !assetsHydrated}
+                    disabled={atGenerationLimit || isGenerating || isBlending || !assetsHydrated}
                     onClick={() => chatInsertInputRef.current?.click()}
                     className="cursor-pointer rounded-full border-none bg-white p-2 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -587,7 +772,7 @@ const CreateDesignStep3ii = () => {
                   </button>
                   <button
                     type="button"
-                    disabled={!canSend || !assetsHydrated || isGenerating || atGenerationLimit}
+                    disabled={!canSend || !assetsHydrated || isGenerating || isBlending || atGenerationLimit}
                     onClick={() => void handleSendRefinement()}
                     className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-black transition-colors hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -608,13 +793,13 @@ const CreateDesignStep3ii = () => {
                 </button>
                 <button
                   type="button"
-                  disabled={!assetsHydrated || isGenerating || !backgroundPreviewImage}
+                  disabled={!assetsHydrated || isGenerating || isBlending || !backgroundPreviewImage}
                   onClick={() => {
                     setBackgroundRefinementNotes(message.trim());
                     navigate("/create-design/step-4");
                   }}
                   className={`flex items-center gap-2 rounded-full border-none px-4 py-3 text-xs font-medium text-white whitespace-nowrap transition-all duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] ${
-                    !assetsHydrated || isGenerating || !backgroundPreviewImage
+                    !assetsHydrated || isGenerating || isBlending || !backgroundPreviewImage
                       ? "cursor-not-allowed bg-[hsl(0,0%,60%)]"
                       : "cursor-pointer bg-[hsl(0,0%,10%)] hover:bg-[hsl(0,0%,20%)]"
                   }`}

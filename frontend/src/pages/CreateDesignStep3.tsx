@@ -7,8 +7,42 @@ import { CUSTOM_CONCEPT_ID, useCreateDesign } from "@/contexts/CreateDesignConte
 import { aiGenerateText } from "@/lib/api";
 import ArcLoader from "@/components/ArcLoader";
 
-/** Fixed slot for column 1: same footprint for intro copy and ArcLoader (no extra panel — matches previous Step 3). */
+/** Column 1: ArcLoader slot (same layout as original standalone loader). */
 const LEFT_CONTENT_SLOT = "ml-2 md:ml-4 w-[220px] min-h-[220px] shrink-0 flex flex-col";
+
+/** Mood board in left column — same responsive card pattern as `HaloRAI` community grid. */
+const BASE_COLOUR_IMAGES: { src: string; alt: string }[] = [
+  { src: "/Halorai Dev/Base-colours/Base-colour_01.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_02.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_03.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_04.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_05.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_06.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_07.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_08.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_09.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_010.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_011.jpg", alt: "Colour sample" },
+  { src: "/Halorai Dev/Base-colours/Base-colour_012.jpg", alt: "Colour sample" },
+];
+
+/** AI concepts: at most two short lines / brief phrases (enforced after parse for consistency). */
+function clampConceptDescription(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  const lines = t
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  const joined = lines.join(" ");
+  const maxLen = 220;
+  if (joined.length <= maxLen) return joined;
+  const cut = joined.slice(0, maxLen).trim();
+  const lastSpace = cut.lastIndexOf(" ");
+  const wordSafe = lastSpace > 48 ? cut.slice(0, lastSpace) : cut;
+  return `${wordSafe}…`;
+}
 
 const CreateDesignStep3 = () => {
   const navigate = useNavigate();
@@ -22,6 +56,8 @@ const CreateDesignStep3 = () => {
     setSelectedConceptId,
     customConceptText,
     setCustomConceptText,
+    baseColourChoice,
+    setBaseColourChoice,
   } = useCreateDesign();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string>("");
@@ -63,12 +99,15 @@ const CreateDesignStep3 = () => {
 
   /** No AI suggestions yet (intro: explain + suggest card + custom). Cached 3 concepts counts as ready. */
   const showIntroLayout = concepts.length === 0 && !isAnalyzing;
+  const hasColourDecision = baseColourChoice !== null;
+  const lockConceptActions = showIntroLayout && !hasColourDecision;
 
   const generateConcepts = useCallback(
     async (opts?: { force?: boolean }) => {
       const force = !!opts?.force;
       if (!hasRequiredStep1Details) return;
       if (inFlightRef.current) return;
+      if (baseColourChoice === null) return;
       if (!theme) {
         setConcepts([]);
         setSelectedConceptId(null);
@@ -87,19 +126,18 @@ const CreateDesignStep3 = () => {
       setSelectedConceptId(null);
 
       const prompt = [
-        "Generate 3 powerful visual concepts based on the provided church event theme.",
-        "Goal: translate the theme into strong, symbolic imagery for a flyer background idea.",
+        "Generate exactly 3 visual background concepts for a church event flyer.",
+        "The THEME is the primary creative anchor. The event name is optional background context only — do not let long titles drive the imagery.",
         `Theme: ${JSON.stringify(theme)}`,
-        eventName ? `Event name (optional context): ${JSON.stringify(eventName)}` : "",
+        eventName ? `Event name (light context only): ${JSON.stringify(eventName)}` : "",
         "",
         "Instructions (follow strictly):",
-        "- Each concept must represent the theme using a clear visual metaphor (a real scene).",
-        "- Focus on emotionally strong and visually striking scenes.",
-        "- Avoid generic ideas; each concept must feel unique and meaningful.",
-        "- Keep descriptions short and vivid (1–2 lines each).",
-        "- Do NOT mention design elements like text, layout, or typography.",
-        "- Focus only on the main visual scene or subject.",
-        "- Make it cinematic and dramatic (not ordinary or everyday scenes).",
+        "- Each concept must express the THEME as one clear visual metaphor (a concrete scene or setting).",
+        "- Each `description` must be extremely concise: at most TWO lines in total, each line only a short phrase (no paragraphs, no numbered lists inside the string).",
+        "- Hard cap: each description under ~220 characters including spaces; if you would exceed that, stop earlier.",
+        "- Each `label` must be a very short title (a few words, under ~40 characters).",
+        "- The three concepts must be clearly different from each other; avoid generic stock ideas.",
+        "- Do NOT mention text, layout, typography, logos, or UI — only the visual scene.",
         "- Use simple, clear English.",
         "",
         "Output (STRICT): Return ONLY valid JSON. No markdown. No extra keys.",
@@ -133,8 +171,10 @@ const CreateDesignStep3 = () => {
                 .slice(0, 3)
                 .map((c, idx: number) => ({
                   id: idx + 1,
-                  label: String((c.label as string | undefined) || `Concept ${idx + 1}`),
-                  description: String((c.description as string | undefined) || (c.text as string | undefined) || "").trim(),
+                  label: String((c.label as string | undefined) || `Concept ${idx + 1}`).trim().slice(0, 48),
+                  description: clampConceptDescription(
+                    String((c.description as string | undefined) || (c.text as string | undefined) || "")
+                  ),
                 }))
                 .filter((c) => c.description)
             : txt
@@ -150,9 +190,9 @@ const CreateDesignStep3 = () => {
                 .filter((c) => c.description);
 
         const fallback = [
-          { id: 1, label: "Concept 1", description: `A clean background with a warm glow and simple light rays to match "${theme}".` },
-          { id: 2, label: "Concept 2", description: `A calm sky with soft clouds and gentle light, matching "${theme}".` },
-          { id: 3, label: "Concept 3", description: `A bold abstract background with smooth shapes and a strong light focus for "${theme}".` },
+          { id: 1, label: "Concept 1", description: clampConceptDescription(`Warm glow and soft light rays echoing "${theme}".`) },
+          { id: 2, label: "Concept 2", description: clampConceptDescription(`Open sky, gentle clouds, quiet light for "${theme}".`) },
+          { id: 3, label: "Concept 3", description: clampConceptDescription(`Bold abstract shapes and a strong focal light for "${theme}".`) },
         ];
 
         const hasAny = next.some((c) => c.description && c.description.trim().length > 0);
@@ -165,7 +205,7 @@ const CreateDesignStep3 = () => {
           filled.push({
             id: filled.length + 1,
             label: `Concept ${filled.length + 1}`,
-            description: "A premium, modern abstract background that matches the theme mood.",
+            description: clampConceptDescription("A premium, modern abstract background that matches the theme mood."),
           });
         }
 
@@ -187,6 +227,7 @@ const CreateDesignStep3 = () => {
       }
     },
     [
+      baseColourChoice,
       desiredKey,
       eventName,
       hasRequiredStep1Details,
@@ -201,6 +242,9 @@ const CreateDesignStep3 = () => {
   const canContinue =
     !!selected && !(selected === CUSTOM_CONCEPT_ID && !customConceptText.trim());
 
+  /** Left-column analyzer: show while generating and keep visible after concepts load (done state). */
+  const showLeftAnalyzer = isAnalyzing || concepts.length > 0;
+
   return (
     <AppLayout>
       <CreateDesignHero title="Create Design" />
@@ -210,50 +254,84 @@ const CreateDesignStep3 = () => {
         <div className="border border-[hsl(0,0%,80%)] rounded-2xl p-6 md:p-8">
           <div className="grid grid-cols-1 md:grid-cols-[0.54fr_1fr] gap-y-8 md:gap-x-6">
             {/* Left Column */}
-            <div className="flex flex-col">
-              <h2 className="text-lg md:text-xl font-semibold text-[hsl(0,0%,10%)] mb-1">
+            <div className="flex min-w-0 flex-col">
+              <h2 className="mb-1 text-lg font-semibold text-[hsl(0,0%,10%)] md:mb-5 md:text-xl">
                 Background Concept
               </h2>
-              <p className="text-sm text-[hsl(0,0%,55%)] mb-8 max-w-[280px]">
+              <p className="text-sm text-[hsl(0,0%,55%)] mb-12 max-w-[280px]">
                 Please Pick a concept from the suggestions or enter your preferred concept
               </p>
 
-              <div className="mt-4 flex items-start justify-start">
-                <div className={LEFT_CONTENT_SLOT}>
-                  {showIntroLayout ? (
-                    <div className="w-full text-left text-xs leading-relaxed text-[hsl(0,0%,40%)]">
-                      <p className="mb-2 font-medium text-[hsl(0,0%,22%)]">What is a concept?</p>
-                      <p className="mb-2">
-                        A <span className="font-semibold text-[hsl(0,0%,18%)]">concept</span> is the visual idea for your flyer
-                        background—mood, scene, and symbolism that match your event theme. It is not the final artwork yet; it guides
-                        the next step where a background image is created.
-                      </p>
-                      <p>
-                        You can <span className="font-semibold text-[hsl(0,0%,18%)]">write your own</span> in Custom, or use{" "}
-                        <span className="font-semibold text-[hsl(0,0%,18%)]">Suggest concept</span> to have three options generated
-                        from your event details (only when you choose—no automatic request).
-                      </p>
-                    </div>
-                  ) : (
+              <div className="mt-4 flex w-full min-w-0 flex-col items-start justify-start gap-6">
+                {showLeftAnalyzer ? (
+                  <div className={LEFT_CONTENT_SLOT}>
                     <div className="flex flex-1 flex-col items-center justify-start pt-0">
                       <ArcLoader
-                      size={180}
-                      label={
-                        isAnalyzing ? (
-                          <span>
-                            Analyzing
-                            <br />
-                            your theme...
-                          </span>
-                        ) : (
-                          <img src="/Halorai Dev/Images/checkmark.svg" alt="Done" className="w-14 h-14" />
-                        )
-                      }
-                      spinning={isAnalyzing}
-                      spinDurationMs={2600}
-                    />
+                        size={180}
+                        label={
+                          isAnalyzing ? (
+                            <span>
+                              Analyzing
+                              <br />
+                              your theme...
+                            </span>
+                          ) : (
+                            <img src="/Halorai Dev/Images/checkmark.svg" alt="Done" className="w-14 h-14" />
+                          )
+                        }
+                        spinning={isAnalyzing}
+                        spinDurationMs={2600}
+                      />
                     </div>
-                  )}
+                  </div>
+                ) : null}
+
+              <h2 className="text-lg font-semibold text-[hsl(0,0%,10%)] md:text-xl">
+                Select Base Colour
+              </h2>
+                <div className="ml-0 w-full min-w-0 max-w-full md:ml-4 md:max-w-[min(100%,340px)] lg:max-w-[min(100%,360px)] xl:max-w-[min(100%,380px)]">
+                  <div className="grid w-full grid-cols-4 gap-1.5 md:grid-cols-2 md:gap-2 min-[950px]:grid-cols-3 min-[1400px]:grid-cols-4">
+                    {BASE_COLOUR_IMAGES.map((item) => {
+                      const selected = baseColourChoice === item.src;
+                      return (
+                        <button
+                          key={item.src}
+                          type="button"
+                          aria-pressed={selected}
+                          aria-label={`Use ${item.alt}`}
+                          onClick={() => setBaseColourChoice(item.src)}
+                          className={`group relative aspect-square cursor-pointer overflow-hidden rounded-lg border-2 border-transparent p-0 shadow-[0_1px_8px_rgba(0,0,0,0.08)] outline-none transition-[transform,box-shadow,ring] xs:rounded-xl focus-visible:ring-2 focus-visible:ring-[hsl(330,100%,70%)] focus-visible:ring-offset-2 ${
+                            selected
+                              ? "z-[1] ring-2 ring-[hsl(330,100%,78%)] ring-offset-2 ring-offset-[hsl(0,0%,100%)] shadow-[0_8px_24px_-8px_rgba(0,0,0,0.18)]"
+                              : "hover:z-[1] hover:-translate-y-0.5 hover:shadow-[0_10px_28px_-12px_rgba(0,0,0,0.2)] hover:ring-1 hover:ring-[hsl(0,0%,78%)]"
+                          }`}
+                        >
+                          <img
+                            src={item.src}
+                            alt=""
+                            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.04]"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          {selected ? (
+                            <span className="pointer-events-none absolute inset-0 rounded-[inherit] ring-2 ring-inset ring-[hsl(330,100%,88%)]" />
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    aria-pressed={baseColourChoice === "skip"}
+                    onClick={() => setBaseColourChoice("skip")}
+                    className={`mt-3 w-full rounded-xl border-2 px-3 py-2.5 text-sm font-medium outline-none transition-[background-color,border-color,box-shadow] focus-visible:ring-2 focus-visible:ring-[hsl(330,100%,70%)] focus-visible:ring-offset-2 ${
+                      baseColourChoice === "skip"
+                        ? "border-[hsl(330,100%,78%)] bg-[hsl(330,100%,97%)] text-[hsl(0,0%,10%)] shadow-[0_0_0_1px_hsl(330,100%,85%)]"
+                        : "border-[hsl(0,0%,85%)] bg-[hsl(0,0%,98%)] text-[hsl(0,0%,35%)] hover:border-[hsl(0,0%,68%)] hover:bg-[hsl(0,0%,100%)]"
+                    }`}
+                  >
+                    Skip — let AI choose colours
+                  </button>
                 </div>
               </div>
             </div>
@@ -291,15 +369,15 @@ const CreateDesignStep3 = () => {
                   <>
                     <button
                       type="button"
-                      disabled={!theme}
+                      disabled={!theme || lockConceptActions}
                       onClick={() => void generateConcepts()}
-                      className={`flex w-full max-w-full flex-col text-left border rounded-2xl p-5 transition-all duration-150 ease-out md:max-w-[440px] ${
-                        !theme
+                      className={`group flex w-full max-w-full flex-col text-left border rounded-2xl p-5 transition-all duration-200 ease-out md:max-w-[440px] ${
+                        !theme || lockConceptActions
                           ? "cursor-not-allowed border-[hsl(0,0%,85%)] bg-[hsl(0,0%,92%)] opacity-70"
-                          : "cursor-pointer border-[hsl(0,0%,85%)] bg-[hsl(0,0%,95%)] hover:border-[hsl(0,0%,70%)]"
+                          : "cursor-pointer border-[hsl(0,0%,85%)] bg-[hsl(0,0%,95%)] hover:border-[hsl(0,0%,68%)] hover:bg-[hsl(0,0%,97%)] hover:shadow-[0_12px_40px_-16px_rgba(0,0,0,0.1)] hover:-translate-y-px active:translate-y-0 active:shadow-[0_4px_16px_-12px_rgba(0,0,0,0.06)]"
                       }`}
                     >
-                      <span className="mb-8 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full bg-white px-3 py-1.5 text-sm font-medium text-[hsl(0,0%,10%)]">
+                      <span className="mb-8 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full bg-white px-3 py-1.5 text-sm font-medium text-[hsl(0,0%,10%)] shadow-sm ring-1 ring-transparent transition-[box-shadow,ring-color,transform] duration-200 group-hover:shadow-md group-hover:ring-[hsl(0,0%,88%)]">
                         Suggest concept
                       </span>
                       <p className="text-sm text-[hsl(0,0%,40%)]">
@@ -309,11 +387,17 @@ const CreateDesignStep3 = () => {
 
                     <div
                       role="presentation"
-                      onClick={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
-                      className={`w-full md:max-w-[440px] text-left border rounded-2xl p-4 cursor-pointer transition-all duration-150 ease-out flex flex-col ${
-                        selected === CUSTOM_CONCEPT_ID
-                          ? "border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)]"
-                          : "bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,70%)]"
+                      aria-disabled={lockConceptActions}
+                      onClick={() => {
+                        if (lockConceptActions) return;
+                        setSelectedConceptId(CUSTOM_CONCEPT_ID);
+                      }}
+                      className={`w-full md:max-w-[440px] text-left border rounded-2xl p-4 transition-all duration-150 ease-out flex flex-col ${
+                        lockConceptActions
+                          ? "pointer-events-none cursor-not-allowed opacity-55 border-[hsl(0,0%,88%)] bg-[hsl(0,0%,96%)]"
+                          : selected === CUSTOM_CONCEPT_ID
+                            ? "cursor-pointer border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)]"
+                            : "cursor-pointer bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,70%)]"
                       }`}
                     >
                       <span
@@ -327,6 +411,7 @@ const CreateDesignStep3 = () => {
                       </span>
                       <textarea
                         value={customConceptText}
+                        disabled={lockConceptActions}
                         onChange={(e) => {
                           setCustomConceptText(e.target.value);
                           setSelectedConceptId(CUSTOM_CONCEPT_ID);
@@ -335,7 +420,7 @@ const CreateDesignStep3 = () => {
                         onClick={(e) => e.stopPropagation()}
                         placeholder="Input your own concept..."
                         rows={4}
-                        className="w-full h-[50px] bg-transparent text-sm text-[hsl(0,0%,40%)] placeholder:text-[hsl(0,0%,65%)] outline-none cursor-text"
+                        className="w-full h-[50px] bg-transparent text-sm text-[hsl(0,0%,40%)] placeholder:text-[hsl(0,0%,65%)] outline-none cursor-text disabled:cursor-not-allowed"
                       />
                     </div>
                   </>
@@ -346,17 +431,17 @@ const CreateDesignStep3 = () => {
                         key={concept.id}
                         type="button"
                         onClick={() => setSelectedConceptId(concept.id)}
-                        className={`flex w-full max-w-full flex-col text-left border rounded-2xl p-5 cursor-pointer transition-all duration-150 ease-out md:max-w-[440px] ${
+                        className={`group flex w-full max-w-full flex-col text-left border rounded-2xl p-5 cursor-pointer transition-all duration-200 ease-out md:max-w-[440px] ${
                           selected === concept.id
-                            ? "border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)]"
-                            : "bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,70%)]"
+                            ? "border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)] hover:border-[hsl(330,100%,78%)] hover:shadow-[0_12px_36px_-16px_rgba(0,0,0,0.09)] hover:-translate-y-px active:translate-y-0 active:shadow-[0_0_0_1px_hsl(330,100%,85%)]"
+                            : "bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,68%)] hover:bg-[hsl(0,0%,97%)] hover:shadow-[0_12px_40px_-16px_rgba(0,0,0,0.1)] hover:-translate-y-px active:translate-y-0 active:shadow-[0_4px_16px_-12px_rgba(0,0,0,0.06)]"
                         }`}
                       >
                         <span
-                          className={`mb-4 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full px-3 py-1.5 text-sm font-medium ${
+                          className={`mb-4 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full px-3 py-1.5 text-sm font-medium shadow-sm ring-1 ring-transparent transition-[box-shadow,ring-color] duration-200 group-hover:shadow-md ${
                             selected === concept.id
-                              ? "bg-[hsl(330,100%,93%)] text-[hsl(0,0%,10%)]"
-                              : "bg-white text-[hsl(0,0%,10%)]"
+                              ? "bg-[hsl(330,100%,93%)] text-[hsl(0,0%,10%)] group-hover:ring-[hsl(330,100%,82%)]"
+                              : "bg-white text-[hsl(0,0%,10%)] group-hover:ring-[hsl(0,0%,88%)]"
                           }`}
                         >
                           {concept.label}

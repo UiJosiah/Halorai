@@ -101,6 +101,31 @@ export async function aiGenerateText(prompt: string, model?: string): Promise<Ai
 
 export type AiImageResponse = { model: string; images: { mimeType: string; base64: string }[] };
 
+/** Server-side blend (Pillow + NumPy) — matches `backend/ai/blend_engine.py`. */
+export type BlendMode = "overlay" | "soft_light" | "multiply" | "screen" | "difference" | "luminosity";
+
+export type FlyerImagePayload = { mimeType: string; base64: string };
+
+/** Blend the AI background (concept) over the Step 3 base swatch. */
+export async function blendBackgroundImage(payload: {
+  baseImage: FlyerImagePayload;
+  conceptImage: FlyerImagePayload;
+  mode: BlendMode;
+  /** 0 = show base only, 1 = full blend-mode result. */
+  opacity: number;
+}): Promise<FlyerImagePayload> {
+  return await requestJson<FlyerImagePayload>(apiUrl("/api/image/blend"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      baseImage: { base64: payload.baseImage.base64 },
+      conceptImage: { base64: payload.conceptImage.base64 },
+      mode: payload.mode,
+      opacity: payload.opacity,
+    }),
+  });
+}
+
 export type AiImageReference = { mimeType: string; base64: string };
 
 /** Text-to-image, or image-to-image when `referenceImages` is non-empty (same `/api/ai/image` route). */
