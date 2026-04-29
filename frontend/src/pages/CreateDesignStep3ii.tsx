@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import CreateDesignHero from "@/components/CreateDesignHero";
 import StepperProgress from "@/components/StepperProgress";
-import { useCreateDesign, type FlyerImage } from "@/contexts/CreateDesignContext";
+import { useCreateDesign, type FlyerImage, type BackgroundHistState } from "@/contexts/CreateDesignContext";
 import {
   aiGenerateImage,
   blendBackgroundImage,
@@ -97,17 +97,13 @@ const BLEND_MODE_OPTIONS: { value: BlendMode; label: string }[] = [
   { value: "luminosity", label: "Luminosity" },
 ];
 
-type BackgroundHistoryEntry = { image: FlyerImage; key: string; rawAi?: FlyerImage };
-
-type BgHistState = { entries: BackgroundHistoryEntry[]; index: number };
-
 /** Extend history from the latest snapshot, not from `index + 1`, so a new gen never drops versions when index < tip. */
 function buildNextBackgroundHist(
-  h: BgHistState,
+  h: BackgroundHistState,
   image: FlyerImage,
   key: string,
   rawAi?: FlyerImage
-): { next: BgHistState; changed: boolean } {
+): { next: BackgroundHistState; changed: boolean } {
   if (h.entries.length === 0) {
     return {
       next: { entries: [{ image, key, ...(rawAi ? { rawAi } : {}) }], index: 0 },
@@ -181,6 +177,12 @@ const CreateDesignStep3ii = () => {
     setBackgroundPreviewKey,
     setBackgroundRefinementNotes,
     baseColourChoice,
+    backgroundHistory: bgHist,
+    setBackgroundHistory: setBgHist,
+    backgroundBlendMode: blendMode,
+    setBackgroundBlendMode: setBlendMode,
+    backgroundBlendOpacity: blendOpacity,
+    setBackgroundBlendOpacity: setBlendOpacity,
   } = useCreateDesign();
 
   const theme = eventDetails.theme?.trim() || "";
@@ -207,8 +209,6 @@ const CreateDesignStep3ii = () => {
   }, [chatInsertPreviewUrl]);
 
   const [isGenerating, setIsGenerating] = useState(false);
-  const [blendMode, setBlendMode] = useState<BlendMode>("soft_light");
-  const [blendOpacity, setBlendOpacity] = useState(0.45);
   const [isBlending, setIsBlending] = useState(false);
   const [error, setError] = useState("");
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
@@ -226,11 +226,7 @@ const CreateDesignStep3ii = () => {
     saveStep3iiGenCount(baseCacheKey, generationsUsed);
   }, [baseCacheKey, generationsUsed]);
 
-  /** Snapshots of successful generations for back/forward within this step. */
-  const [bgHist, setBgHist] = useState<BgHistState>({
-    entries: [],
-    index: -1,
-  });
+  /** Snapshots of successful generations — stored on context so Step 3 ↔ 3ii keeps versions + raw AI for blend. */
   const bgHistRef = useRef(bgHist);
   bgHistRef.current = bgHist;
 
@@ -247,12 +243,14 @@ const CreateDesignStep3ii = () => {
       prevBaseCacheKeyRef.current = baseCacheKey;
       rawAiImageRef.current = null;
       setBgHist({ entries: [], index: -1 });
+      setBlendMode("soft_light");
+      setBlendOpacity(0.45);
       historyInitFromContextRef.current = false;
       const nextCount = loadStep3iiGenCount(baseCacheKey);
       generationsUsedRef.current = nextCount;
       setGenerationsUsed(nextCount);
     }
-  }, [baseCacheKey]);
+  }, [baseCacheKey, setBgHist, setBlendMode, setBlendOpacity]);
 
   /** Seed history once from context when a preview exists but nothing is in the stack yet (e.g. IDB). */
   useEffect(() => {
@@ -269,7 +267,7 @@ const CreateDesignStep3ii = () => {
     });
     generationsUsedRef.current = Math.max(generationsUsedRef.current, 1);
     setGenerationsUsed((u) => Math.max(u, 1));
-  }, [backgroundPreviewImage, backgroundPreviewKey]);
+  }, [backgroundPreviewImage, backgroundPreviewKey, setBgHist]);
 
   useEffect(() => {
     if (!concept) {
@@ -280,6 +278,12 @@ const CreateDesignStep3ii = () => {
   const shouldBlendSwatch = useMemo(
     () => typeof baseColourChoice === "string" && baseColourChoice.startsWith("/Halorai Dev/Base-colours/"),
     [baseColourChoice]
+  );
+
+  /** URL for immediate swatch preview before any AI image exists (same paths as Step 3). */
+  const swatchPlaceholderUrl = useMemo(
+    () => (shouldBlendSwatch && baseColourChoice ? encodeAssetPathForFetch(baseColourChoice) : null),
+    [baseColourChoice, shouldBlendSwatch]
   );
 
   const applySwatchBlend = useCallback(
@@ -297,36 +301,47 @@ const CreateDesignStep3ii = () => {
     [baseColourChoice, blendMode, blendOpacity, shouldBlendSwatch]
   );
 
-  const reblendFromRaw = useCallback(async () => {
-    const raw = rawAiImageRef.current;
-    if (!shouldBlendSwatch || !raw?.base64?.trim()) return;
+  /** Re-apply swatch blend to every history slot that has raw AI (e.g. new colour from Step 3, or slider/mode change). No AI regeneration. */
+  const reblendAllHistoryFromRaw = useCallback(async () => {
+    if (!shouldBlendSwatch) return;
+    const entries = bgHistRef.current.entries;
+    if (entries.length === 0 || !entries.some((e) => e.rawAi)) return;
     setIsBlending(true);
     setError("");
     try {
-      const blended = await applySwatchBlend(raw);
-      setBackgroundPreviewImage(blended);
-      setBgHist((prev) => {
-        if (prev.index < 0 || prev.index >= prev.entries.length) return prev;
-        const entries = [...prev.entries];
-        entries[prev.index] = { ...entries[prev.index], image: blended };
-        return { ...prev, entries };
-      });
+      const idx = bgHistRef.current.index;
+      const nextEntries = await Promise.all(
+        entries.map(async (ent) => {
+          if (!ent.rawAi) return ent;
+          const blended = await applySwatchBlend(ent.rawAi);
+          return { ...ent, image: blended };
+        })
+      );
+      const safeIdx =
+        idx >= 0 && idx < nextEntries.length ? idx : Math.max(0, nextEntries.length - 1);
+      setBgHist({ entries: nextEntries, index: safeIdx });
+      const cur = nextEntries[safeIdx];
+      if (cur?.image) {
+        setBackgroundPreviewImage(cur.image);
+        setBackgroundPreviewKey(cur.key);
+      }
+      if (cur?.rawAi) rawAiImageRef.current = cur.rawAi;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Colour blend failed.");
     } finally {
       setIsBlending(false);
     }
-  }, [applySwatchBlend, setBackgroundPreviewImage, shouldBlendSwatch]);
+  }, [applySwatchBlend, setBackgroundPreviewImage, setBackgroundPreviewKey, setBgHist, shouldBlendSwatch]);
 
-  /** Slider / mode changes re-run blend on raw AI (debounced). Omit isGenerating so finishing a gen doesn't fire a duplicate blend. */
+  /** Swatch path or blend controls changed — update every blended preview from stored raw AI (debounced). */
   useEffect(() => {
     if (!shouldBlendSwatch) return;
-    if (!rawAiImageRef.current?.base64?.trim()) return;
+    if (!bgHistRef.current.entries.some((e) => e.rawAi)) return;
     const t = window.setTimeout(() => {
-      void reblendFromRaw();
+      void reblendAllHistoryFromRaw();
     }, 280);
     return () => window.clearTimeout(t);
-  }, [blendMode, blendOpacity, reblendFromRaw, shouldBlendSwatch]);
+  }, [baseColourChoice, blendMode, blendOpacity, reblendAllHistoryFromRaw, shouldBlendSwatch]);
 
   useEffect(() => {
     const e = bgHist.entries[bgHist.index];
@@ -386,13 +401,13 @@ const CreateDesignStep3ii = () => {
         inFlightRef.current = false;
       }
     },
-    [applySwatchBlend, concept, setBackgroundPreviewImage, setBackgroundPreviewKey, shouldBlendSwatch, theme]
+    [applySwatchBlend, concept, setBackgroundPreviewImage, setBackgroundPreviewKey, setBgHist, shouldBlendSwatch, theme]
   );
 
   const handleApplyBlendOnly = useCallback(() => {
     if (!shouldBlendSwatch || isBlending || isGenerating) return;
-    void reblendFromRaw();
-  }, [isBlending, isGenerating, reblendFromRaw, shouldBlendSwatch]);
+    void reblendAllHistoryFromRaw();
+  }, [isBlending, isGenerating, reblendAllHistoryFromRaw, shouldBlendSwatch]);
 
   // Auto-generate only when we still need a base image for this concept+theme.
   // Same concept+theme must never re-run AI (refinements use different keys but same c,t).
@@ -501,10 +516,8 @@ const CreateDesignStep3ii = () => {
   const showCenterLoader =
     !assetsHydrated || isGenerating || isBlending || (!backgroundPreviewImage && !error);
 
-  const hasRawAiForBlend = useMemo(() => {
-    if (bgHist.index < 0 || bgHist.index >= bgHist.entries.length) return false;
-    return !!bgHist.entries[bgHist.index]?.rawAi;
-  }, [bgHist.entries, bgHist.index]);
+  /** At least one generation stored raw AI — colour/blend tweaks apply to all versions without new AI. */
+  const hasAnyRawAiForBlend = useMemo(() => bgHist.entries.some((e) => e.rawAi), [bgHist.entries]);
 
   return (
     <AppLayout>
@@ -518,16 +531,27 @@ const CreateDesignStep3ii = () => {
             <div className="flex min-w-0 w-full max-w-full flex-col max-md:items-center">
               <div className="relative mx-auto aspect-[4/5] w-full max-w-[min(100%,20rem)] rounded-2xl bg-[hsl(0,0%,88%)] ring-1 ring-[hsl(0,0%,90%)] md:mx-0 md:max-w-none">
                 <div className="absolute inset-0 overflow-hidden rounded-2xl">
+                  {swatchPlaceholderUrl && !backgroundPreviewImage ? (
+                    <img
+                      src={swatchPlaceholderUrl}
+                      alt=""
+                      className="absolute inset-0 z-0 h-full w-full object-cover"
+                    />
+                  ) : null}
                   {backgroundPreviewImage ? (
                     <img
                       src={`data:${backgroundPreviewImage.mimeType};base64,${backgroundPreviewImage.base64}`}
                       alt=""
-                      className="absolute inset-0 h-full w-full object-cover"
+                      className="absolute inset-0 z-[1] h-full w-full object-cover"
                     />
                   ) : null}
 
                   {showCenterLoader ? (
-                    <div className="absolute inset-0 z-[1] flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
+                    <div
+                      className={`absolute inset-0 z-[2] flex items-center justify-center backdrop-blur-[2px] ${
+                        swatchPlaceholderUrl && !backgroundPreviewImage ? "bg-black/25" : "bg-black/40"
+                      }`}
+                    >
                       <ArcLoader
                         size={180}
                         label={
@@ -661,7 +685,7 @@ const CreateDesignStep3ii = () => {
                     Blend mode
                     <select
                       value={blendMode}
-                      disabled={isGenerating || isBlending || !hasRawAiForBlend}
+                      disabled={isGenerating || isBlending || !hasAnyRawAiForBlend}
                       onChange={(e) => setBlendMode(e.target.value as BlendMode)}
                       className="rounded-lg border border-[hsl(0,0%,85%)] bg-white px-2 py-2 text-sm text-[hsl(0,0%,15%)] outline-none disabled:opacity-50"
                     >
@@ -679,14 +703,14 @@ const CreateDesignStep3ii = () => {
                       min={0}
                       max={100}
                       value={Math.round(blendOpacity * 100)}
-                      disabled={isGenerating || isBlending || !hasRawAiForBlend}
+                      disabled={isGenerating || isBlending || !hasAnyRawAiForBlend}
                       onChange={(e) => setBlendOpacity(Number(e.target.value) / 100)}
                       className="w-full accent-[hsl(330,100%,45%)] disabled:opacity-50"
                     />
                   </label>
                   <button
                     type="button"
-                    disabled={!hasRawAiForBlend || isGenerating || isBlending}
+                    disabled={!hasAnyRawAiForBlend || isGenerating || isBlending}
                     onClick={() => handleApplyBlendOnly()}
                     className="self-start rounded-full border border-[hsl(0,0%,85%)] bg-white px-3 py-1.5 text-xs font-medium text-[hsl(0,0%,15%)] hover:bg-[hsl(0,0%,97%)] disabled:cursor-not-allowed disabled:opacity-50"
                   >

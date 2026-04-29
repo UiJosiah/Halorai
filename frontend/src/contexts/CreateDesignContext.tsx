@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { BlendMode } from "@/lib/api";
 import { del, getBlob, getFile, putBlob, putFile } from "@/lib/idbFileStore";
 
 export type EventDetails = {
@@ -43,6 +44,13 @@ export type FlyerImage = {
   base64: string;
 };
 
+/** Step 3ii: stack of AI backgrounds (display + cache key + optional raw AI for colour re-blend). Survives Step 3 ↔ 3ii navigation. */
+export type BackgroundHistoryEntry = { image: FlyerImage; key: string; rawAi?: FlyerImage };
+
+export type BackgroundHistState = { entries: BackgroundHistoryEntry[]; index: number };
+
+const EMPTY_BACKGROUND_HIST: BackgroundHistState = { entries: [], index: -1 };
+
 type CreateDesignState = {
   eventDetails: EventDetails;
   setEventDetails: React.Dispatch<React.SetStateAction<EventDetails>>;
@@ -82,6 +90,14 @@ type CreateDesignState = {
   setBackgroundPreviewImage: (next: FlyerImage | null) => void;
   backgroundPreviewKey: string;
   setBackgroundPreviewKey: (next: string) => void;
+  /** Step 3ii: multi-version history + raw AI for base-colour blend without regeneration. */
+  backgroundHistory: BackgroundHistState;
+  setBackgroundHistory: React.Dispatch<React.SetStateAction<BackgroundHistState>>;
+  /** Step 3ii: base-colour blend controls (context so Step 3 ↔ 3ii does not reset sliders). */
+  backgroundBlendMode: BlendMode;
+  setBackgroundBlendMode: React.Dispatch<React.SetStateAction<BlendMode>>;
+  backgroundBlendOpacity: number;
+  setBackgroundBlendOpacity: React.Dispatch<React.SetStateAction<number>>;
   /** Optional notes from Step 3ii textarea when continuing (refinements). */
   backgroundRefinementNotes: string;
   setBackgroundRefinementNotes: (next: string) => void;
@@ -118,6 +134,49 @@ const LS_BASE_COLOUR_CHOICE = "createDesign_baseColourChoice_v1";
 
 const IDB_FLYER_IMAGE = "flyerImage_v1";
 const IDB_BACKGROUND_PREVIEW = "backgroundPreview_v1";
+
+/** Must match Step 3ii MAX_BG_GENERATIONS */
+const BG_HIST_STORAGE_SLOTS = 3;
+
+const LS_BACKGROUND_HISTORY_META = "createDesign_backgroundHistoryMeta_v1";
+
+function idbBackgroundHistDisplay(slot: number): string {
+  return `backgroundHist_v1_disp_${slot}`;
+}
+function idbBackgroundHistRaw(slot: number): string {
+  return `backgroundHist_v1_raw_${slot}`;
+}
+
+type StoredBackgroundHistMeta = {
+  baseKey: string;
+  index: number;
+  entries: { key: string; displayMime: string; rawMime?: string | null }[];
+  blendMode?: BlendMode;
+  blendOpacity?: number;
+};
+
+const BLEND_MODES: readonly BlendMode[] = [
+  "overlay",
+  "soft_light",
+  "multiply",
+  "screen",
+  "difference",
+  "luminosity",
+];
+
+function isBlendMode(v: unknown): v is BlendMode {
+  return typeof v === "string" && (BLEND_MODES as readonly string[]).includes(v);
+}
+
+function conceptDescriptionFromState(
+  selectedConceptId: number | null,
+  customConceptText: string,
+  concepts: FlyerConcept[]
+): string {
+  if (selectedConceptId === CUSTOM_CONCEPT_ID) return customConceptText.trim();
+  const c = concepts.find((x) => x.id === selectedConceptId);
+  return (c?.description || concepts[0]?.description || "").trim();
+}
 
 type StoredFileRef = { id: string; name: string; type: string; lastModified: number };
 type StoredMinisterRow = {
@@ -171,6 +230,9 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
   const [flyerImage, setFlyerImage] = useState<FlyerImage | null>(null);
   const [backgroundPreviewImage, setBackgroundPreviewImage] = useState<FlyerImage | null>(null);
   const [backgroundPreviewKey, setBackgroundPreviewKey] = useState<string>(() => localStorage.getItem(LS_BACKGROUND_PREVIEW_KEY) || "");
+  const [backgroundHistory, setBackgroundHistory] = useState<BackgroundHistState>(() => ({ ...EMPTY_BACKGROUND_HIST }));
+  const [backgroundBlendMode, setBackgroundBlendMode] = useState<BlendMode>("soft_light");
+  const [backgroundBlendOpacity, setBackgroundBlendOpacity] = useState(0.45);
   const [backgroundRefinementNotes, setBackgroundRefinementNotes] = useState<string>(
     () => localStorage.getItem(LS_BACKGROUND_REFINEMENT) || ""
   );
@@ -194,6 +256,23 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
     return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
   };
 
+  const selectedConceptDescription = useMemo(() => {
+    if (selectedConceptId === CUSTOM_CONCEPT_ID) return customConceptText.trim();
+    const c = concepts.find((x) => x.id === selectedConceptId);
+    return (c?.description || concepts[0]?.description || "").trim();
+  }, [concepts, customConceptText, selectedConceptId]);
+
+  const backgroundBaseCacheKey = useMemo(
+    () =>
+      JSON.stringify({
+        c: selectedConceptDescription,
+        t: (eventDetails.theme || "").trim(),
+        r: "",
+        x: "",
+      }),
+    [eventDetails.theme, selectedConceptDescription]
+  );
+
   // Hydrate Step 2 assets + Step 5 flyer image from storage (refresh-safe).
   useEffect(() => {
     let cancelled = false;
@@ -204,6 +283,10 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
         const storedMinisters = _safeJsonParse<StoredMinisterRow[]>(localStorage.getItem(LS_MINISTERS)) ?? [];
         const flyerMeta = _safeJsonParse<{ mimeType: string }>(localStorage.getItem(LS_FLYER_IMAGE_META));
         const bgMeta = _safeJsonParse<{ mimeType: string }>(localStorage.getItem(LS_BACKGROUND_PREVIEW_META));
+
+        const conceptTrim = conceptDescriptionFromState(selectedConceptId, customConceptText, concepts);
+        const themeTrim = (eventDetails.theme || "").trim();
+        const baseKey = JSON.stringify({ c: conceptTrim, t: themeTrim, r: "", x: "" });
 
         const hydratedLogos: LocalFileItem[] = [];
         for (const ref of storedLogos) {
@@ -235,8 +318,48 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
           }
         }
 
+        const histMeta = _safeJsonParse<StoredBackgroundHistMeta>(localStorage.getItem(LS_BACKGROUND_HISTORY_META));
+        let hydratedHist: BackgroundHistState | null = null;
+
+        if (
+          histMeta &&
+          typeof histMeta.index === "number" &&
+          Array.isArray(histMeta.entries) &&
+          histMeta.entries.length > 0 &&
+          histMeta.baseKey === baseKey
+        ) {
+          const built: BackgroundHistoryEntry[] = [];
+          let complete = true;
+          for (let i = 0; i < histMeta.entries.length; i++) {
+            const spec = histMeta.entries[i];
+            const dispBlob = await getBlob(idbBackgroundHistDisplay(i));
+            if (!dispBlob) {
+              complete = false;
+              break;
+            }
+            const dMime = spec.displayMime || dispBlob.type || "image/png";
+            const dB64 = await blobToBase64(dispBlob);
+            const image: FlyerImage = { mimeType: dMime, base64: dB64 };
+            let rawAi: FlyerImage | undefined;
+            const rawBlob = await getBlob(idbBackgroundHistRaw(i));
+            if (rawBlob) {
+              const rMime = spec.rawMime || rawBlob.type || "image/png";
+              const rB64 = await blobToBase64(rawBlob);
+              rawAi = { mimeType: rMime, base64: rB64 };
+            }
+            built.push({ image, key: spec.key, ...(rawAi ? { rawAi } : {}) });
+          }
+          if (complete && built.length === histMeta.entries.length) {
+            const idx = Math.min(Math.max(0, histMeta.index), built.length - 1);
+            hydratedHist = { entries: built, index: idx };
+          }
+        }
+
         let hydratedBg: FlyerImage | null = null;
-        if (bgMeta?.mimeType) {
+        if (hydratedHist && hydratedHist.entries.length > 0) {
+          const cur = hydratedHist.entries[hydratedHist.index];
+          if (cur?.image) hydratedBg = cur.image;
+        } else if (bgMeta?.mimeType) {
           const blob = await getBlob(IDB_BACKGROUND_PREVIEW);
           if (blob) {
             const b64 = await blobToBase64(blob);
@@ -248,6 +371,21 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
         setLogos(hydratedLogos);
         setMinisters(hydratedMinisters);
         setFlyerImage(hydratedFlyer);
+        if (hydratedHist && hydratedHist.entries.length > 0) {
+          setBackgroundHistory(hydratedHist);
+          if (isBlendMode(histMeta?.blendMode)) {
+            setBackgroundBlendMode(histMeta.blendMode);
+          }
+          if (
+            typeof histMeta?.blendOpacity === "number" &&
+            histMeta.blendOpacity >= 0 &&
+            histMeta.blendOpacity <= 1
+          ) {
+            setBackgroundBlendOpacity(histMeta.blendOpacity);
+          }
+          const cur = hydratedHist.entries[hydratedHist.index];
+          if (cur?.key) setBackgroundPreviewKey(cur.key);
+        }
         setBackgroundPreviewImage(hydratedBg);
 
         prevLogoIdsRef.current = new Set(hydratedLogos.map((l) => l.id));
@@ -283,6 +421,9 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
     setCustomConceptText("");
     setBackgroundPreviewImage(null);
     setBackgroundPreviewKey("");
+    setBackgroundHistory({ ...EMPTY_BACKGROUND_HIST });
+    setBackgroundBlendMode("soft_light");
+    setBackgroundBlendOpacity(0.45);
     setBackgroundRefinementNotes("");
     setFlyerImage(null);
     setFlyerKey("");
@@ -343,11 +484,63 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
     }
   }, [assetsHydrated, backgroundPreviewImage]);
 
-  const selectedConceptDescription = useMemo(() => {
-    if (selectedConceptId === CUSTOM_CONCEPT_ID) return customConceptText.trim();
-    const c = concepts.find((x) => x.id === selectedConceptId);
-    return (c?.description || concepts[0]?.description || "").trim();
-  }, [concepts, customConceptText, selectedConceptId]);
+  useEffect(() => {
+    if (!assetsHydrated) return;
+    const entries = backgroundHistory.entries;
+    if (entries.length === 0) {
+      localStorage.removeItem(LS_BACKGROUND_HISTORY_META);
+      for (let i = 0; i < BG_HIST_STORAGE_SLOTS; i++) {
+        void del(idbBackgroundHistDisplay(i));
+        void del(idbBackgroundHistRaw(i));
+      }
+      return;
+    }
+
+    const meta: StoredBackgroundHistMeta = {
+      baseKey: backgroundBaseCacheKey,
+      index: backgroundHistory.index,
+      entries: entries.map((e) => ({
+        key: e.key,
+        displayMime: e.image.mimeType,
+        rawMime: e.rawAi?.mimeType ?? null,
+      })),
+      blendMode: backgroundBlendMode,
+      blendOpacity: backgroundBlendOpacity,
+    };
+    localStorage.setItem(LS_BACKGROUND_HISTORY_META, JSON.stringify(meta));
+
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      try {
+        const bin = atob(e.image.base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+        void putBlob(idbBackgroundHistDisplay(i), new Blob([bytes], { type: e.image.mimeType || "image/png" }), {
+          name: `bg-hist-${i}-display`,
+        });
+      } catch {
+        /* ignore */
+      }
+      if (e.rawAi?.base64) {
+        try {
+          const bin = atob(e.rawAi.base64);
+          const bytes = new Uint8Array(bin.length);
+          for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+          void putBlob(idbBackgroundHistRaw(i), new Blob([bytes], { type: e.rawAi.mimeType || "image/png" }), {
+            name: `bg-hist-${i}-raw`,
+          });
+        } catch {
+          /* ignore */
+        }
+      } else {
+        void del(idbBackgroundHistRaw(i));
+      }
+    }
+    for (let i = entries.length; i < BG_HIST_STORAGE_SLOTS; i++) {
+      void del(idbBackgroundHistDisplay(i));
+      void del(idbBackgroundHistRaw(i));
+    }
+  }, [assetsHydrated, backgroundHistory, backgroundBaseCacheKey, backgroundBlendMode, backgroundBlendOpacity]);
 
   useEffect(() => {
     if (!assetsHydrated) return;
@@ -447,6 +640,12 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
       setBackgroundPreviewImage,
       backgroundPreviewKey,
       setBackgroundPreviewKey,
+      backgroundHistory,
+      setBackgroundHistory,
+      backgroundBlendMode,
+      setBackgroundBlendMode,
+      backgroundBlendOpacity,
+      setBackgroundBlendOpacity,
       backgroundRefinementNotes,
       setBackgroundRefinementNotes,
       baseColourChoice,
@@ -454,6 +653,9 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
     }),
     [
       assetsHydrated,
+      backgroundBlendMode,
+      backgroundBlendOpacity,
+      backgroundHistory,
       backgroundPreviewImage,
       backgroundPreviewKey,
       backgroundRefinementNotes,
