@@ -546,6 +546,35 @@ def ai_flyer():
   else:
     minister_slot_summary = "- No minister photo references were uploaded."
 
+  minister_photo_sizing_block: list[str] = []
+  if n_minister_imgs > 0:
+    minister_photo_sizing_block = [
+      "",
+      "MINISTER PHOTO SIZE ON THE FLYER (BACKGROUND #1 ONLY — DOES NOT APPLY TO LOGOS):",
+      f"- There are {n_minister_imgs} minister photo(s). The **combined visible area** of all minister portraits (after cutout, on top of the background) should be about **30–40% of the full 4:5 canvas** so faces are never tiny.",
+      "- **Fewer ministers ⇒ each portrait larger:** with one minister, that single figure should use most of that ~35% band (one bold presence). With two or three, split that band across them so **each face stays large and readable** — do not shrink ministers to leave empty canvas.",
+      "- Logos are **excluded** from this rule: keep logos as **small** marks in their template logo zones only. Do **not** steal size from ministers to enlarge logos.",
+    ]
+
+  logo_scale_note: list[str] = []
+  if n_logos > 0:
+    logo_scale_note = [
+      "",
+      "LOGO SCALE (SEPARATE FROM MINISTERS):",
+      "- Logos stay **small** crisp brand marks where the template shows logo space. The ~35% footprint rule above applies **only** to minister photos.",
+    ]
+
+  multi_minister_block: list[str] = []
+  if n_minister_imgs > 1:
+    multi_minister_block = [
+      "",
+      "MULTIPLE MINISTERS — FOLLOW TEMPLATE #2 GEOMETRY ONLY (NOT FOR LOGOS):",
+      "- Look at the **people / minister placeholder frames** in reference #2. On background #1, reproduce their **left-to-right order, horizontal spacing between adjacent frames, vertical alignment, and the overall width of the minister band** as closely as the composition allows.",
+      "- Ministers must read as **one cluster** in the same arrangement as the template — **not** pushed toward unrelated far corners and **not** with gaps wider than the template suggests between faces.",
+      "- If the template shows three heads close together, keep your three uploads **similarly close**; do not spread them across the flyer.",
+      "- This cluster / spacing rule applies **only** to minister portraits. **Do not** use it for logos — logos use only their own template slots, separate from the minister group.",
+    ]
+
   prompt_lines = [
     "Flyer Builder Prompt",
     "",
@@ -592,6 +621,8 @@ def ai_flyer():
     "- Place each minister photo in the region suggested by the template (#2), scaled and cropped to fit image #1.",
     "- Minister photos from uploads are source-of-truth pixels: do NOT regenerate/redraw a new person. Allowed edits: remove background, cut out subject, and crop excess only to fit the target frame.",
     "- Remove any template placeholder faces; use only the provided minister reference images.",
+    *multi_minister_block,
+    *minister_photo_sizing_block,
     "",
     "3. Logos (if provided)",
     *(
@@ -607,6 +638,7 @@ def ai_flyer():
       if n_logos > 0
       else ["- No logo reference images were uploaded."]
     ),
+    *logo_scale_note,
     "",
     "----------------------------------",
     "",
@@ -630,7 +662,8 @@ def ai_flyer():
     "VALIDATION BEFORE OUTPUT:",
     "- Background still matches reference #1’s scene (not swapped for template art).",
     "- All USER CONTENT text is present and spelled exactly as given; no extra text strings are introduced.",
-    "- Minister and logo references used in the correct slots.",
+    "- Minister photos used in correct slots; **minister group** footprint roughly **~35%** of canvas (logos small, separate).",
+    "- With 2+ ministers: spacing and band match template #2’s people frames (clustered, not overspread).",
     "- No newly generated people/logos/decorative assets were introduced beyond uploaded references.",
     "- Theme reads visually stronger than the event name; logos match uploaded pixels (unedited).",
     "",
