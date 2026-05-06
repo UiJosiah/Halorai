@@ -179,3 +179,19 @@ export async function aiGenerateFlyer(payload: {
   return await requestJson<AiFlyerResponse>(apiUrl("/api/ai/flyer"), { method: "POST", body: fd });
 }
 
+/** Masked inpaint on the final flyer (white mask = edit). Requires OpenAI on the server. */
+export async function aiFlyerInpaint(payload: {
+  image: Blob;
+  mask: Blob;
+  prompt: string;
+  model?: string;
+}): Promise<AiFlyerResponse> {
+  const fd = new FormData();
+  fd.append("image", payload.image, "flyer.png");
+  fd.append("mask", payload.mask, "mask.png");
+  fd.append("prompt", payload.prompt);
+  if (payload.model) fd.append("model", payload.model);
+
+  return await requestJson<AiFlyerResponse>(apiUrl("/api/ai/flyer/inpaint"), { method: "POST", body: fd });
+}
+

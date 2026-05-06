@@ -167,6 +167,91 @@ def recreate_image_base64(
   return out
 
 
+def inpaint_with_mask_base64(
+  image_bytes: bytes,
+  mask_user_png_bytes: bytes,
+  prompt: str,
+  model: Optional[str] = None,
+  *,
+  aspect_ratio: Optional[str] = "4:5",
+  number_of_images: int = 1,
+  output_format: str = "png",
+  input_fidelity: str = "high",
+) -> List[Dict[str, Any]]:
+  """
+  Region inpaint using OpenAI Images `edit` with an explicit mask.
+  User mask convention (PNG greyscale or RGB): **bright / white = edit**, **dark / black = preserve**.
+  OpenAI expects transparent pixels = regions to edit, opaque = preserve.
+  """
+  if not prompt or not str(prompt).strip():
+    raise ValueError("prompt is required")
+  if not image_bytes:
+    raise ValueError("image is required")
+  if not mask_user_png_bytes:
+    raise ValueError("mask is required")
+
+  from PIL import Image
+
+  im = Image.open(io.BytesIO(image_bytes))
+  im = im.convert("RGBA")
+  w, h = im.size
+  if w < 32 or h < 32:
+    raise ValueError("image dimensions too small")
+  if w > 4096 or h > 4096:
+    raise ValueError("image dimensions too large (max 4096px)")
+
+  m_user = Image.open(io.BytesIO(mask_user_png_bytes)).convert("L")
+  if m_user.size != (w, h):
+    m_user = m_user.resize((w, h), Image.Resampling.LANCZOS)
+
+  # Count edit pixels (user "white"); reject empty mask
+  pixels = list(m_user.getdata())
+  edit_count = sum(1 for p in pixels if p >= 128)
+  if edit_count == 0:
+    raise ValueError("mask has no painted edit region (paint white over areas to change)")
+  if edit_count >= len(pixels) * 0.98:
+    raise ValueError("mask covers nearly the entire image; inpainting requires some preserved area")
+
+  # OpenAI: transparent = edit, opaque = preserve (vectorised via alpha channel)
+  alpha = m_user.point(lambda v: 0 if v >= 128 else 255)
+  black = Image.new("L", (w, h), 0)
+  openai_mask = Image.merge("RGBA", (black, black, black, alpha))
+
+  buf_im = io.BytesIO()
+  im.save(buf_im, format="PNG")
+  buf_im.seek(0)
+  setattr(buf_im, "name", "flyer.png")
+
+  buf_mask = io.BytesIO()
+  openai_mask.save(buf_mask, format="PNG")
+  buf_mask.seek(0)
+  setattr(buf_mask, "name", "mask.png")
+
+  m = (model or "").strip() or _preferred_image_model()
+  n = max(1, int(number_of_images or 1))
+  size = _openai_image_edit_size(aspect_ratio=aspect_ratio)
+
+  res = _client().images.edit(
+    model=m,
+    image=buf_im,
+    mask=buf_mask,
+    prompt=str(prompt).strip(),
+    n=n,
+    size=size,
+    input_fidelity=input_fidelity,
+    output_format=output_format,
+  )
+
+  out: List[Dict[str, Any]] = []
+  for item in (getattr(res, "data", None) or [])[:n]:
+    b64 = (getattr(item, "b64_json", None) or getattr(item, "b64Json", None) or "").strip()
+    if not b64:
+      continue
+    mime = "image/png" if output_format.lower() == "png" else "image/jpeg"
+    out.append({"mimeType": mime, "base64": b64})
+  return out
+
+
 def generate_flyer_image_base64(
   prompt: str,
   model: Optional[str] = None,

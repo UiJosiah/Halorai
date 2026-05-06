@@ -6,6 +6,7 @@ import { useCreateDesign } from "@/contexts/CreateDesignContext";
 import { aiGenerateFlyer } from "@/lib/api";
 import { downloadFlyer } from "@/lib/downloadFlyer";
 import ArcLoader from "@/components/ArcLoader";
+import FlyerInpaintEditor from "@/components/FlyerInpaintEditor";
 import type { FlyerImage } from "@/contexts/CreateDesignContext";
 
 function flyerImageToFile(img: FlyerImage): File {
@@ -345,6 +346,18 @@ const CreateDesignStep5 = () => {
               </div>
             </div>
           </div>
+
+          {/* Row 3: masked local inpaint (does not replace full-flyer text edit above) */}
+          {flyerImage ? (
+            <div className="mt-8 border-t border-[hsl(0,0%,90%)] pt-6">
+              <h3 className="mb-1 text-sm font-semibold text-[hsl(0,0%,10%)]">Paint to edit (masked region)</h3>
+              <p className="mb-4 max-w-[42rem] text-xs text-[hsl(0,0%,48%)]">
+                Brush the areas you want changed, add a short prompt, then apply. The rest of the flyer stays
+                unchanged. This uses a separate inpainting call from the full-flyer &quot;Edit&quot; above.
+              </p>
+              <FlyerInpaintEditor flyerImage={flyerImage} resetKey={flyerKey} setFlyerImage={setFlyerImage} />
+            </div>
+          ) : null}
         </div>
       </div>
     </AppLayout>

@@ -131,6 +131,47 @@ def recreate_image_base64(
   return _extract_inline_images(resp, limit=number_of_images)
 
 
+def inpaint_flyer_with_mask_base64(
+  image_png_bytes: bytes,
+  mask_png_bytes: bytes,
+  prompt: str,
+  model: str,
+  *,
+  aspect_ratio: Optional[str] = "4:5",
+  number_of_images: int = 1,
+) -> List[Dict[str, Any]]:
+  """
+  Mask-guided edit using Gemini image output: reference 1 = flyer, reference 2 = mask
+  (white = allowed edit region, black = must stay unchanged). Not true API inpainting;
+  instructs the model to respect the mask semantics.
+  """
+  if not prompt or not str(prompt).strip():
+    raise ValueError("prompt is required")
+  img_b64 = base64.b64encode(image_png_bytes).decode("ascii")
+  mask_b64 = base64.b64encode(mask_png_bytes).decode("ascii")
+
+  full_prompt = (
+    "You are editing a finished event flyer image.\n"
+    "- REFERENCE IMAGE 1: the current flyer. Preserve every pixel outside the edit region.\n"
+    "- REFERENCE IMAGE 2: a mask. WHITE pixels mark where you MAY change pixels to satisfy the request. "
+    "BLACK (and near-black) pixels MUST stay visually identical to reference 1 — same text, faces, logos, layout, and colors in those areas.\n\n"
+    "USER REQUEST (apply only in white mask areas; keep everything else matching reference 1):\n"
+    + str(prompt).strip()
+    + "\n\nOutput exactly ONE edited flyer image with the same aspect ratio and framing as reference 1."
+  )
+
+  return recreate_image_base64(
+    full_prompt,
+    model,
+    reference_images=[
+      {"mimeType": "image/png", "base64": img_b64},
+      {"mimeType": "image/png", "base64": mask_b64},
+    ],
+    aspect_ratio=aspect_ratio,
+    number_of_images=number_of_images,
+  )
+
+
 def generate_flyer_image_base64(
   prompt: str,
   model: str,

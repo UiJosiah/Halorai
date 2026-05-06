@@ -6,7 +6,13 @@ import re
 
 from flask import Blueprint, jsonify, request, g
 
-from .ai_client import generate_flyer_image_base64, generate_images_base64, generate_text, recreate_image_base64
+from .ai_client import (
+  generate_flyer_image_base64,
+  generate_images_base64,
+  generate_text,
+  inpaint_flyer_region_base64,
+  recreate_image_base64,
+)
 from .blend_engine import blend_concept_over_base
 from .templates import MAX_MINISTERS, pick_template_image
 
@@ -770,4 +776,89 @@ def ai_flyer():
       "images": images,
     }
   )
+
+
+@ai_bp.post("/api/ai/flyer/inpaint")
+def ai_flyer_inpaint():
+  """
+  Masked local edit of the generated flyer (Step 5).
+  multipart/form-data:
+    - image: final flyer image (PNG/JPEG/WebP)
+    - mask: PNG same aspect as image; **white = edit**, **black = preserve**
+    - prompt: what to change inside the white regions only
+    - model: optional (defaults to AI_IMAGE_MODEL / same as other image routes; OpenAI vs Gemini from AI_PROVIDER)
+  """
+  prompt = (request.form.get("prompt") or "").strip()
+  if not prompt:
+    return _json_error("prompt is required", 400)
+  if len(prompt) > 4000:
+    return _json_error("prompt is too long (max 4000 characters)", 400)
+
+  img_f = request.files.get("image")
+  mask_f = request.files.get("mask")
+  if not img_f or not getattr(img_f, "filename", None):
+    return _json_error("image file is required", 400)
+  if not mask_f or not getattr(mask_f, "filename", None):
+    return _json_error("mask file is required (PNG recommended; white = areas to edit)", 400)
+
+  image_bytes = img_f.read() or b""
+  mask_bytes = mask_f.read() or b""
+  if not image_bytes:
+    return _json_error("image file is empty", 400)
+  if not mask_bytes:
+    return _json_error("mask file is empty", 400)
+
+  model = (request.form.get("model") or "").strip() or DEFAULT_IMAGE_MODEL
+
+  t0 = time.perf_counter()
+  try:
+    print(
+      f"[AI][{_rid()}] /api/ai/flyer/inpaint -> model={model!r} promptChars={len(prompt)} imageBytes={len(image_bytes)} maskBytes={len(mask_bytes)}",
+      flush=True,
+    )
+  except Exception:
+    pass
+
+  try:
+    images = inpaint_flyer_region_base64(
+      image_bytes,
+      mask_bytes,
+      prompt,
+      model,
+      aspect_ratio="4:5",
+      number_of_images=1,
+    )
+  except ValueError as e:
+    return _json_error(str(e), 400)
+  except RuntimeError as e:
+    return _json_error(str(e) or "Inpainting is not available.", 503)
+  except Exception as e:
+    status, msg = _ai_exception_to_http(e)
+    ai_logger.exception(
+      json.dumps(
+        {
+          "type": "ai_error",
+          "endpoint": "/api/ai/flyer/inpaint",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "error": str(e),
+        },
+        ensure_ascii=False,
+      )
+    )
+    return _json_error(msg, status)
+
+  t_ms = int((time.perf_counter() - t0) * 1000)
+  first = images[0] if images else None
+  if first:
+    b64 = (first.get("base64") or "")
+    try:
+      print(
+        f"[AI][{_rid()}] /api/ai/flyer/inpaint <- ok {t_ms}ms mimeType={first.get('mimeType')} base64Len={len(b64)}",
+        flush=True,
+      )
+    except Exception:
+      pass
+
+  return jsonify({"model": model, "images": images})
 
