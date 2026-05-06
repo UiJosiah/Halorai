@@ -1,13 +1,35 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import CreateDesignHero from "@/components/CreateDesignHero";
+import MinisterDragHandle from "@/components/MinisterDragHandle";
 import StepperProgress from "@/components/StepperProgress";
-import { useCreateDesign } from "@/contexts/CreateDesignContext";
+import { useCreateDesign, type LocalFileItem, type MinisterLocalRow } from "@/contexts/CreateDesignContext";
+import { useMinistersReorder } from "@/hooks/useMinistersReorder";
+import { MAX_MINISTERS } from "@/lib/limits";
+
+const placeholderPairs = [
+  { placeholderName: "Pastor John Michael", placeholderTitle: "Guest Speaker" },
+  { placeholderName: "Pastor Drake Akinola", placeholderTitle: "Host" },
+  { placeholderName: "Mrs Sonia Precious", placeholderTitle: "Guest Speaker" },
+  { placeholderName: "Pst (Mrs) Funke Tojuola (JP)", placeholderTitle: "Special Guest" },
+];
 
 const CreateDesignStep4 = () => {
   const navigate = useNavigate();
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const ministerInputRef = useRef<HTMLInputElement | null>(null);
   const { eventDetails, logos, setLogos, ministers, setMinisters, backgroundPreviewImage } = useCreateDesign();
+
+  const canAddMoreLogos = logos.length < 2;
+  const remainingLogoSlots = Math.max(0, 2 - logos.length);
+  const canAddMoreMinisters = ministers.length < MAX_MINISTERS;
+  const remainingMinisterSlots = Math.max(0, MAX_MINISTERS - ministers.length);
+
+  const nextPlaceholder = useMemo(() => {
+    return (idx: number) => placeholderPairs[idx] ?? { placeholderName: "Minister name", placeholderTitle: "Role/Title" };
+  }, []);
+  const ministersReorder = useMinistersReorder(setMinisters);
   const missingMinisterName = ministers.length > 0 && ministers.some((m) => !m.name.trim());
 
   /** Same field order as before; labels match Step 1 (CreateDesign). */
@@ -29,6 +51,42 @@ const CreateDesignStep4 = () => {
       const target = prev.find((l) => l.id === id);
       if (target) URL.revokeObjectURL(target.previewUrl);
       return prev.filter((l) => l.id !== id);
+    });
+  };
+
+  const handleAddLogos = (files: File[]) => {
+    const slice = files.slice(0, remainingLogoSlots);
+    if (!slice.length) return;
+    const items: LocalFileItem[] = slice.map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+    }));
+    setLogos((prev) => [...prev, ...items].slice(0, 2));
+  };
+
+  const handleAddMinisterImages = (files: File[]) => {
+    const slice = files.slice(0, remainingMinisterSlots);
+    if (!slice.length) return;
+    setMinisters((prev) => {
+      const startIdx = prev.length;
+      const newRows: MinisterLocalRow[] = slice.map((file, i) => {
+        const ph = nextPlaceholder(startIdx + i);
+        const avatar: LocalFileItem = {
+          id: crypto.randomUUID(),
+          file,
+          previewUrl: URL.createObjectURL(file),
+        };
+        return {
+          id: crypto.randomUUID(),
+          avatar,
+          name: "",
+          title: "",
+          placeholderName: ph.placeholderName,
+          placeholderTitle: ph.placeholderTitle,
+        };
+      });
+      return [...prev, ...newRows];
     });
   };
 
@@ -86,36 +144,59 @@ const CreateDesignStep4 = () => {
             </div>
 
             {/* Logos Card */}
-            <div className="bg-[hsl(0,0%,97%)] border border-[hsl(0,0%,95%)] rounded-2xl p-5 flex flex-col">
-              <div className="flex items-center justify-between mb-5">
+            <div className="flex h-full min-h-0 flex-col rounded-2xl border border-[hsl(0,0%,95%)] bg-[hsl(0,0%,97%)] p-5">
+              <div className="mb-4 flex shrink-0 items-center justify-between">
                 <h3 className="text-sm font-semibold text-[hsl(0,0%,10%)]">Upload Logo</h3>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"));
+                    e.target.value = "";
+                    handleAddLogos(files);
+                  }}
+                />
                 <button
-                  onClick={() => navigate("/create-design/step-2")}
-                  className="flex items-center gap-2 border border-[hsl(0,0%,85%)] rounded-lg px-3 py-1.5 text-xs font-medium text-[hsl(0,0%,10%)] bg-white cursor-pointer hover:border-[hsl(0,0%,60%)] transition-colors"
+                  type="button"
+                  disabled={!canAddMoreLogos}
+                  onClick={() => canAddMoreLogos && logoInputRef.current?.click()}
+                  className={`flex items-center gap-2 rounded-lg border border-[hsl(0,0%,85%)] bg-white px-3 py-1.5 text-xs font-medium text-[hsl(0,0%,10%)] transition-colors ${
+                    canAddMoreLogos
+                      ? "cursor-pointer hover:border-[hsl(0,0%,60%)]"
+                      : "cursor-not-allowed opacity-60"
+                  }`}
                 >
-                  <img src="/Halorai Dev/Icons/material-symbols_upload-rounded.svg" alt="Upload" className="w-4 h-4" />
+                  <img src="/Halorai Dev/Icons/material-symbols_upload-rounded.svg" alt="" className="w-4 h-4" />
                   Upload
                 </button>
               </div>
-              <div className="flex-1 flex items-center justify-center">
-                <div className="flex items-center justify-center gap-3">
-                  {logos.length ? (
-                    logos.map((logo) => (
-                      <div key={logo.id} className="relative">
-                        <img src={logo.previewUrl} alt={logo.file.name} className="w-14 h-14 object-cover rounded-full" />
+              <div className="ministers-scroll flex min-h-[120px] flex-1 flex-col gap-3 overflow-y-auto pr-2">
+                {!canAddMoreLogos ? (
+                  <p className="text-[11px] text-[hsl(0,0%,50%)]">Maximum 2 logos.</p>
+                ) : null}
+                {logos.length ? (
+                  logos.map((logo) => (
+                    <div key={logo.id} className="flex items-center gap-3">
+                      <div className="relative shrink-0">
+                        <img src={logo.previewUrl} alt={logo.file.name} className="h-10 w-10 rounded-full object-cover" />
                         <button
+                          type="button"
                           onClick={() => handleRemoveLogo(logo.id)}
-                          className="absolute -top-1 -right-1 w-5 h-5 bg-[hsl(15,100%,55%)] rounded-full flex items-center justify-center border-none cursor-pointer"
+                          className="absolute -right-1 -top-1 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border-none bg-[hsl(15,100%,55%)]"
                           aria-label="Remove logo"
                         >
-                          <img src="/Halorai Dev/Icons/cancel.svg" alt="Remove" className="w-2.5 h-2.5 brightness-0 invert" />
+                          <img src="/Halorai Dev/Icons/cancel.svg" alt="" className="h-2.5 w-2.5 brightness-0 invert" />
                         </button>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-xs text-[hsl(0,0%,55%)]">No logos uploaded.</div>
-                  )}
-                </div>
+                      <span className="min-w-0 truncate text-xs text-[hsl(0,0%,40%)]">{logo.file.name}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-[hsl(0,0%,55%)]">No logos uploaded.</div>
+                )}
               </div>
             </div>
           </div>
@@ -125,19 +206,58 @@ const CreateDesignStep4 = () => {
             {/* Ministers Card */}
             <div className="flex h-full min-h-0 flex-col rounded-2xl border border-[hsl(0,0%,95%)] bg-[hsl(0,0%,97%)] p-5">
               <div className="mb-4 flex shrink-0 items-center justify-between">
-                <h3 className="text-sm font-semibold text-[hsl(0,0%,10%)]">Add Ministers Name</h3>
+                <h3 className="text-sm font-semibold text-[hsl(0,0%,10%)]">Add Ministers Name <span className="text-xs text-[hsl(0,0%,55%)]">(In Order of Importance, Starting With The Most Prominent)</span></h3>
+                <input
+                  ref={ministerInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"));
+                    e.target.value = "";
+                    handleAddMinisterImages(files);
+                  }}
+                />
                 <button
-                  onClick={() => navigate("/create-design/step-2")}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg border border-[hsl(0,0%,85%)] bg-white px-3 py-1.5 text-xs font-medium text-[hsl(0,0%,10%)] transition-colors hover:border-[hsl(0,0%,60%)]"
+                  type="button"
+                  disabled={!canAddMoreMinisters}
+                  onClick={() => canAddMoreMinisters && ministerInputRef.current?.click()}
+                  className={`flex items-center gap-2 rounded-lg border border-[hsl(0,0%,85%)] bg-white px-3 py-1.5 text-xs font-medium text-[hsl(0,0%,10%)] transition-colors ${
+                    canAddMoreMinisters
+                      ? "cursor-pointer hover:border-[hsl(0,0%,60%)]"
+                      : "cursor-not-allowed opacity-60"
+                  }`}
                 >
-                  <img src="/Halorai Dev/Icons/material-symbols_upload-rounded.svg" alt="Upload" className="w-4 h-4" />
+                  <img src="/Halorai Dev/Icons/material-symbols_upload-rounded.svg" alt="" className="w-4 h-4" />
                   Upload
                 </button>
               </div>
+              {!canAddMoreMinisters ? (
+                <p className="mb-2 shrink-0 text-[11px] text-[hsl(0,0%,50%)]">Maximum {MAX_MINISTERS} minister images.</p>
+              ) : null}
+              {ministers.length > 1 ? (
+                <p className="mb-2 shrink-0 text-[11px] text-[hsl(330,100%,38%)]">
+                  Drag the handle beside each row to reorder (top = most prominent).
+                </p>
+              ) : null}
               <div className="ministers-scroll flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto pr-2">
                 {ministers.length ? (
-                  ministers.map((minister) => (
-                    <div key={minister.id} className="flex items-center gap-3">
+                  ministers.map((minister, index) => (
+                    <div
+                      key={minister.id}
+                      className={`flex items-center gap-3 ${ministersReorder.rowVisualClass(index)}`}
+                      {...ministersReorder.rowDragHandlers(index)}
+                    >
+                      {ministers.length > 1 ? (
+                        <MinisterDragHandle
+                          compact
+                          onDragStart={ministersReorder.handleDragStart(index)}
+                          onDragEnd={ministersReorder.handleDragEnd}
+                        />
+                      ) : (
+                        <span className="w-3 shrink-0" aria-hidden />
+                      )}
                       <img
                         src={minister.avatar.previewUrl}
                         alt={minister.avatar.file.name}

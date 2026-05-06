@@ -404,11 +404,6 @@ const CreateDesignStep3ii = () => {
     [applySwatchBlend, concept, setBackgroundPreviewImage, setBackgroundPreviewKey, setBgHist, shouldBlendSwatch, theme]
   );
 
-  const handleApplyBlendOnly = useCallback(() => {
-    if (!shouldBlendSwatch || isBlending || isGenerating) return;
-    void reblendAllHistoryFromRaw();
-  }, [isBlending, isGenerating, reblendAllHistoryFromRaw, shouldBlendSwatch]);
-
   // Auto-generate only when we still need a base image for this concept+theme.
   // Same concept+theme must never re-run AI (refinements use different keys but same c,t).
   // If `backgroundPreviewKey` is empty or not JSON, `stored` is null — we must still skip when a preview
@@ -705,17 +700,9 @@ const CreateDesignStep3ii = () => {
                       value={Math.round(blendOpacity * 100)}
                       disabled={isGenerating || isBlending || !hasAnyRawAiForBlend}
                       onChange={(e) => setBlendOpacity(Number(e.target.value) / 100)}
-                      className="w-full accent-[hsl(330,100%,45%)] disabled:opacity-50"
-                    />
+                    className="w-full accent-[hsl(330,100%,45%)] disabled:opacity-50"
+                  />
                   </label>
-                  <button
-                    type="button"
-                    disabled={!hasAnyRawAiForBlend || isGenerating || isBlending}
-                    onClick={() => handleApplyBlendOnly()}
-                    className="self-start rounded-full border border-[hsl(0,0%,85%)] bg-white px-3 py-1.5 text-xs font-medium text-[hsl(0,0%,15%)] hover:bg-[hsl(0,0%,97%)] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Apply blend now
-                  </button>
                 </div>
               ) : baseColourChoice === "skip" ? (
                 <p className="mb-4 max-w-[420px] text-xs text-[hsl(0,0%,50%)]">

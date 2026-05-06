@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import CreateDesignHero from "@/components/CreateDesignHero";
 import StepperProgress from "@/components/StepperProgress";
+import MinisterDragHandle from "@/components/MinisterDragHandle";
 import { useCreateDesign, type LocalFileItem, type MinisterLocalRow } from "@/contexts/CreateDesignContext";
+import { useMinistersReorder } from "@/hooks/useMinistersReorder";
 import { MAX_MINISTERS } from "@/lib/limits";
 
 const placeholderPairs = [
@@ -20,6 +22,7 @@ const CreateDesignStep2 = () => {
 
   const { logos, setLogos, ministers, setMinisters } = useCreateDesign();
   const [didContinue, setDidContinue] = useState(false);
+  const ministersReorder = useMinistersReorder(setMinisters);
 
   const canAddMoreLogos = logos.length < 2;
   const remainingLogoSlots = Math.max(0, 2 - logos.length);
@@ -207,15 +210,30 @@ const CreateDesignStep2 = () => {
 
             {/* Right Column - Ministers Names */}
             <div className="md:pl-12 xl:pl-14">
-              <h3 className="text-sm font-semibold text-[hsl(0,0%,10%)] mb-1">Add Ministers Name</h3>
+              <h3 className="text-sm font-semibold text-[hsl(0,0%,10%)] mb-1">Add Ministers Name <span className="text-xs text-[hsl(0,0%,55%)]">(In Order of Importance, Starting With The Most Prominent)</span></h3>
               <p className="text-xs text-[hsl(0,0%,55%)] mb-4">
-                Enter Name and Title (Title is optional)
+                Enter Name and Title (Title is optional).{" "}
+                {ministers.length > 1 ? (
+                  <span className="text-[hsl(330,100%,38%)]">Use the drag handle on the left to reorder rows (top = most prominent).</span>
+                ) : null}
               </p>
               <div
                 className="flex flex-col gap-3 md:h-[220px] lg:h-[210px] xl:h-[200px] md:overflow-y-auto md:pr-6 ministers-scroll"
               >
-                {ministers.map((minister) => (
-                  <div key={minister.id} className="flex items-start lg:items-center gap-3">
+                {ministers.map((minister, index) => (
+                  <div
+                    key={minister.id}
+                    className={`flex items-start gap-3 lg:items-center ${ministersReorder.rowVisualClass(index)}`}
+                    {...ministersReorder.rowDragHandlers(index)}
+                  >
+                    {ministers.length > 1 ? (
+                      <MinisterDragHandle
+                        onDragStart={ministersReorder.handleDragStart(index)}
+                        onDragEnd={ministersReorder.handleDragEnd}
+                      />
+                    ) : (
+                      <span className="w-4 shrink-0" aria-hidden />
+                    )}
                     <img src={minister.avatar.previewUrl} alt={minister.avatar.file.name} className="w-10 h-10 rounded-full object-cover shrink-0" />
                     <div className="flex-1 min-w-0 flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
                       <input
