@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import CreateDesignHero from "@/components/CreateDesignHero";
 import StepperProgress from "@/components/StepperProgress";
 import { useCreateDesign } from "@/contexts/CreateDesignContext";
-import { aiGenerateFlyer } from "@/lib/api";
+import { aiFlyerInpaint, aiGenerateFlyer } from "@/lib/api";
 import { downloadFlyer } from "@/lib/downloadFlyer";
 import ArcLoader from "@/components/ArcLoader";
-import FlyerInpaintEditor from "@/components/FlyerInpaintEditor";
+import FlyerEditCanvas, { type PendingFlyerRegion } from "@/components/FlyerEditCanvas";
+import FlyerEditPanel, {
+  FLYER_EDIT_COST_PER_REGION,
+  FLYER_EDIT_MAX_REGIONS,
+  type FlyerEditRegion,
+} from "@/components/FlyerEditPanel";
+import { FLYER_SKETCH_DEFAULT_COLOR } from "@/lib/flyerEditGeometry";
+import { flyerImageToPngBlob } from "@/lib/flyerEditGeometry";
 import type { FlyerImage } from "@/contexts/CreateDesignContext";
 
 function flyerImageToFile(img: FlyerImage): File {
@@ -24,11 +31,18 @@ function flyerImageToFile(img: FlyerImage): File {
 
 const CreateDesignStep5 = () => {
   const [message, setMessage] = useState("");
-  const hasMessage = message.trim().length > 0;
   const [isPreparing, setIsPreparing] = useState(false);
+  const [isApplyingEdits, setIsApplyingEdits] = useState(false);
   const [error, setError] = useState<string>("");
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+
+  const [regions, setRegions] = useState<FlyerEditRegion[]>([]);
+  const [circleMode, setCircleMode] = useState(false);
+  const [sketchColor, setSketchColor] = useState<string>(FLYER_SKETCH_DEFAULT_COLOR);
+  const [directInsertImage, setDirectInsertImage] = useState<File | null>(null);
+  const [directInsertPreviewUrl, setDirectInsertPreviewUrl] = useState<string | null>(null);
+  const directPreviewRef = useRef<string | null>(null);
 
   const {
     assetsHydrated,
@@ -107,6 +121,22 @@ const CreateDesignStep5 = () => {
     selectedConceptId,
   ]);
 
+  const clearEditSession = useCallback(() => {
+    setRegions([]);
+    setCircleMode(false);
+    setMessage("");
+    setDirectInsertImage(null);
+    if (directPreviewRef.current) {
+      URL.revokeObjectURL(directPreviewRef.current);
+      directPreviewRef.current = null;
+    }
+    setDirectInsertPreviewUrl(null);
+  }, []);
+
+  useEffect(() => {
+    clearEditSession();
+  }, [flyerKey, clearEditSession]);
+
   const generateFlyer = useCallback(async (opts?: { message?: string; keepExisting?: boolean; force?: boolean }) => {
     const force = !!opts?.force;
     const keepExisting = !!opts?.keepExisting;
@@ -119,7 +149,6 @@ const CreateDesignStep5 = () => {
       return;
     }
 
-    // If we already have an image for this key, do not regenerate unless forced.
     if (!force && flyerImage && flyerKey === generationKey) {
       setError("");
       setIsPreparing(false);
@@ -151,6 +180,7 @@ const CreateDesignStep5 = () => {
       }
       setFlyerKey(generationKey);
       setFlyerImage(first);
+      clearEditSession();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to generate flyer.";
       setError(msg);
@@ -160,6 +190,7 @@ const CreateDesignStep5 = () => {
   }, [
     backgroundPreviewImage,
     canGenerate,
+    clearEditSession,
     conceptDescription,
     eventDetails,
     flyerImage,
@@ -172,7 +203,6 @@ const CreateDesignStep5 = () => {
   ]);
 
   useEffect(() => {
-    // Generate once when required inputs become available, unless already generated.
     if (!canGenerate) return;
     void generateFlyer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -189,11 +219,107 @@ const CreateDesignStep5 = () => {
     }
   };
 
-  const handleEdit = async () => {
-    if (!canGenerate) return;
-    // Keep current flyer visible while we request an edited version.
-    await generateFlyer({ message: message.trim(), keepExisting: true, force: true });
+  const hasRegions = regions.length > 0;
+  const maxRegionsReached = regions.length >= FLYER_EDIT_MAX_REGIONS;
+  const plusDisabled = hasRegions || circleMode;
+  const circleDisabled = !!directInsertImage;
+  const textareaDisabled = hasRegions;
+  const editCost = hasRegions ? regions.length * FLYER_EDIT_COST_PER_REGION : FLYER_EDIT_COST_PER_REGION;
+  const busy = isPreparing || isApplyingEdits;
+
+  const handlePickDirectInsert = (file: File) => {
+    if (directPreviewRef.current) URL.revokeObjectURL(directPreviewRef.current);
+    const url = URL.createObjectURL(file);
+    directPreviewRef.current = url;
+    setDirectInsertPreviewUrl(url);
+    setDirectInsertImage(file);
+    setCircleMode(false);
   };
+
+  const handleClearDirectInsert = () => {
+    setDirectInsertImage(null);
+    if (directPreviewRef.current) {
+      URL.revokeObjectURL(directPreviewRef.current);
+      directPreviewRef.current = null;
+    }
+    setDirectInsertPreviewUrl(null);
+  };
+
+  const handleAddRegion = (pending: PendingFlyerRegion) => {
+    if (regions.length >= FLYER_EDIT_MAX_REGIONS) return;
+    setRegions((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${prev.length}`,
+        previewUrl: pending.previewUrl,
+        maskBlob: pending.maskBlob,
+        prompt: pending.prompt,
+        referenceImage: pending.referenceImage,
+      },
+    ]);
+    setCircleMode(false);
+    handleClearDirectInsert();
+  };
+
+  const handleRemoveRegion = (id: string) => {
+    setRegions((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const applyRegionEdits = async () => {
+    if (!flyerImage || regions.length === 0) return;
+    setError("");
+    setIsApplyingEdits(true);
+    try {
+      let current: FlyerImage = flyerImage;
+      for (const region of regions) {
+        const imageBlob = await flyerImageToPngBlob(current);
+        const res = await aiFlyerInpaint({
+          image: imageBlob,
+          mask: region.maskBlob,
+          prompt: region.prompt,
+        });
+        const next = res.images?.[0];
+        if (!next?.base64) {
+          setError("AI returned no image for a region edit. Please retry.");
+          return;
+        }
+        current = next;
+      }
+      setFlyerImage(current);
+      clearEditSession();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to apply region edits.";
+      setError(msg);
+    } finally {
+      setIsApplyingEdits(false);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!canGenerate || !flyerImage || busy) return;
+
+    if (hasRegions) {
+      await applyRegionEdits();
+      return;
+    }
+
+    const trimmed = message.trim();
+    if (!trimmed) return;
+
+    setError("");
+    setIsApplyingEdits(true);
+    try {
+      await generateFlyer({ message: trimmed, keepExisting: true, force: true });
+    } finally {
+      setIsApplyingEdits(false);
+    }
+  };
+
+  const sendDisabled = useMemo(() => {
+    if (!canGenerate || !flyerImage || busy) return true;
+    if (hasRegions) return false;
+    return !message.trim();
+  }, [busy, canGenerate, flyerImage, hasRegions, message]);
 
   return (
     <AppLayout>
@@ -201,14 +327,11 @@ const CreateDesignStep5 = () => {
       <StepperProgress currentStep={5} />
 
       <div className="px-4 xs:px-0">
-        <div className="border border-[hsl(0,0%,80%)] rounded-2xl p-6 md:p-8">
-
-          <div className="grid grid-cols-1 md:grid-cols-[0.35fr_0.45fr_0.35fr] gap-6 md:gap-4">
+        <div className="rounded-2xl border border-[hsl(0,0%,80%)] p-6 md:p-8">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-[0.35fr_0.45fr_0.35fr] md:gap-4">
             {/* Left Column - Analysing theme */}
-            <div className=" items-center justify-center">
-              <h2 className="text-lg md:text-xl font-semibold text-[hsl(0,0%,10%)] mb-6">
-                Preparing Your Design
-              </h2>
+            <div className="items-center justify-center">
+              <h2 className="mb-6 text-lg font-semibold text-[hsl(0,0%,10%)] md:text-xl">Preparing Your Design</h2>
 
               <div className="my-20 pl-4">
                 <ArcLoader
@@ -216,148 +339,162 @@ const CreateDesignStep5 = () => {
                   label={
                     !assetsHydrated ? (
                       "Loading..."
-                    ) : isPreparing ? (
-                        <span>
-                          Compositing
-                          <br />
-                          your flyer...
-                        </span>
+                    ) : isPreparing || isApplyingEdits ? (
+                      <span>
+                        {isApplyingEdits ? (
+                          <>
+                            Applying
+                            <br />
+                            your edits...
+                          </>
+                        ) : (
+                          <>
+                            Compositing
+                            <br />
+                            your flyer...
+                          </>
+                        )}
+                      </span>
                     ) : canGenerate ? (
-                      <img src="/Halorai Dev/Images/checkmark.svg" alt="Done" className="w-14 h-14" />
+                      <img src="/Halorai Dev/Images/checkmark.svg" alt="Done" className="h-14 w-14" />
                     ) : (
                       "Missing info"
                     )
                   }
-                  spinning={!assetsHydrated || isPreparing}
+                  spinning={!assetsHydrated || isPreparing || isApplyingEdits}
                   spinDurationMs={3200}
                 />
               </div>
             </div>
 
-            {/* Middle Column — flyer preview: scales with screen size */}
+            {/* Middle Column — flyer preview + circle overlay + download */}
             <div className="flex min-h-0 items-center justify-center px-2">
-              <div className="inline-flex max-w-full items-center justify-center overflow-hidden rounded-xl bg-[hsl(0,0%,94%)] ring-1 ring-[hsl(0,0%,92%)]">
-                {flyerImage ? (
-                  <img
-                    src={`data:${flyerImage.mimeType};base64,${flyerImage.base64}`}
-                    alt="Design Preview"
-                    className="block max-w-full w-auto h-auto max-h-[min(75vh,640px)] object-contain"
-                  />
-                ) : (
-                  <div
-                    className="aspect-[4/5] w-full min-w-[240px] sm:min-w-[280px] md:min-w-[320px] lg:min-w-[380px] xl:min-w-[440px] bg-transparent"
-                    aria-label="Design preview loading"
-                  />
-                )}
+              <div className="inline-flex max-w-full flex-col items-stretch">
+                <div className="relative overflow-hidden rounded-xl bg-[hsl(0,0%,94%)] ring-1 ring-[hsl(0,0%,92%)]">
+                  {flyerImage ? (
+                    <>
+                      <img
+                        src={`data:${flyerImage.mimeType};base64,${flyerImage.base64}`}
+                        alt="Design Preview"
+                        className="block h-auto max-h-[min(75vh,640px)] w-auto max-w-full object-contain"
+                      />
+                      <FlyerEditCanvas
+                        flyerImage={flyerImage}
+                        resetKey={flyerKey}
+                        circleMode={circleMode}
+                        sketchColor={sketchColor}
+                        disabled={busy || maxRegionsReached}
+                        onAddRegion={handleAddRegion}
+                      />
+                    </>
+                  ) : (
+                    <div
+                      className="aspect-[4/5] w-full min-w-[240px] bg-transparent sm:min-w-[280px] md:min-w-[320px] lg:min-w-[380px] xl:min-w-[440px]"
+                      aria-label="Design preview loading"
+                    />
+                  )}
+                </div>
+
+                <div className="mt-4 flex w-full justify-end">
+                  <div className="relative inline-flex">
+                    {isDownloadOpen && flyerImage ? (
+                      <div
+                        className="absolute right-full top-0 z-20 mr-0 min-w-[11rem] rounded-2xl border border-[hsl(0,0%,90%)] bg-white p-2 shadow-lg"
+                        role="menu"
+                      >
+                        <span
+                          className="pointer-events-none absolute -right-[4px] top-3 box-border h-2.5 w-2.5 rotate-45 border border-[hsl(0,0%,90%)] border-b-0 border-l-0 bg-white"
+                          aria-hidden
+                        />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void handleDownload("png")}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm text-[hsl(0,0%,10%)] transition-colors hover:bg-[hsl(0,0%,97%)]"
+                        >
+                          PNG
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void handleDownload("jpg")}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm text-[hsl(0,0%,10%)] transition-colors hover:bg-[hsl(0,0%,97%)]"
+                        >
+                          JPG
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void handleDownload("pdf")}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm text-[hsl(0,0%,10%)] transition-colors hover:bg-[hsl(0,0%,97%)]"
+                        >
+                          PDF (clear view)
+                        </button>
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={!canGenerate || !flyerImage || isDownloading}
+                      onClick={() => setIsDownloadOpen((v) => !v)}
+                      className={`inline-flex items-center justify-center gap-2 rounded-full border-none px-6 py-3 text-sm font-regular transition-colors ${
+                        !canGenerate || !flyerImage || isDownloading
+                          ? "cursor-not-allowed bg-[hsl(0,0%,60%)] text-white"
+                          : "cursor-pointer bg-[hsl(0,0%,10%)] text-white hover:bg-[hsl(0,0%,20%)]"
+                      }`}
+                    >
+                      {isDownloading ? "Preparing..." : "Download"}
+                      <img
+                        src="/Halorai Dev/Icons/weui_arrow-outlined-forward.svg"
+                        alt=""
+                        className="h-4 w-4 pl-1"
+                      />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Right Column - Chat/Edit input + Buttons */}
-            <div className="flex flex-col items-center h-full md:justify-center">
-              <div className="w-full max-w-[420px] bg-[hsl(0,0%,97%)] border border-[hsl(0,0%,95%)] rounded-2xl p-4 flex flex-col min-h-[240px]">
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Put the logo on the right hand, and Remove the..."
-                  className="flex-1 w-full resize-none border-none outline-none text-sm text-[hsl(0,0%,10%)] placeholder:text-[hsl(0,0%,65%)] bg-transparent"
-                />
-                <div className="flex justify-end mt-2">
-                  <button
-                    disabled={!canGenerate}
-                    className={`w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors border-none ${
-                      hasMessage
-                        ? "bg-[hsl(25,100%,35%)] hover:bg-[hsl(25,100%,30%)]"
-                        : "bg-[hsl(0,0%,60%)] hover:bg-[hsl(0,0%,55%)]"
-                    }`}
-                  >
-                    <img src="/Halorai Dev/Icons/send Vector.svg" alt="Send" className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
+            {/* Right Column — edit panel */}
+            <div className="flex h-full flex-col items-center md:justify-center">
+              <FlyerEditPanel
+                regions={regions}
+                onRemoveRegion={handleRemoveRegion}
+                message={message}
+                onMessageChange={setMessage}
+                textareaDisabled={textareaDisabled}
+                directInsertImage={directInsertImage}
+                directInsertPreviewUrl={directInsertPreviewUrl}
+                onPickDirectInsert={handlePickDirectInsert}
+                onClearDirectInsert={handleClearDirectInsert}
+                plusDisabled={plusDisabled}
+                circleMode={circleMode}
+                onCircleModeToggle={() => setCircleMode((v) => !v)}
+                circleDisabled={circleDisabled}
+                maxRegionsReached={maxRegionsReached}
+                onSend={() => void handleSend()}
+                sendDisabled={sendDisabled}
+                isApplying={isApplyingEdits}
+                editCost={editCost}
+                sketchColor={sketchColor}
+                onSketchColorChange={setSketchColor}
+                sketchColorDisabled={circleDisabled}
+              />
 
               {error ? (
-                <div className="w-full max-w-[420px] mt-3">
+                <div className="mt-3 w-full max-w-[420px]">
                   <div className="text-xs text-[hsl(15,100%,45%)]">{error}</div>
                   {canGenerate ? (
                     <button
                       onClick={() => void generateFlyer()}
-                      className="mt-3 inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-medium bg-[hsl(0,0%,10%)] text-white hover:bg-[hsl(0,0%,20%)] transition-colors border-none"
+                      className="mt-3 inline-flex items-center justify-center rounded-full border-none bg-[hsl(0,0%,10%)] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[hsl(0,0%,20%)]"
                     >
                       Retry
                     </button>
                   ) : null}
                 </div>
               ) : null}
-
-              <div className="w-full max-w-[420px] flex items-center gap-5 mt-4">
-                <button
-                  disabled={!canGenerate || isPreparing || !hasMessage}
-                  onClick={() => void handleEdit()}
-                  className={`flex items-center justify-center gap-2 border rounded-full px-6 py-3 text-sm font-regular transition-colors w-[140px] ${
-                    !canGenerate || isPreparing || !hasMessage
-                      ? "bg-[hsl(0,0%,97%)] border-[hsl(0,0%,95%)] text-[hsl(0,0%,40%)] cursor-not-allowed"
-                      : "bg-[hsl(0,0%,97%)] border-[hsl(0,0%,95%)] text-[hsl(0,0%,10%)] cursor-pointer hover:border-[hsl(0,0%,60%)]"
-                  }`}
-                >
-                  <img src="/Halorai Dev/Icons/lucide_edit-3.svg" alt="Edit" className="w-4 h-4" />
-                  Edit
-                </button>
-                <div className="flex-1 relative">
-                  <button
-                    disabled={!canGenerate || !flyerImage || isDownloading}
-                    onClick={() => setIsDownloadOpen((v) => !v)}
-                    className={`w-full flex items-center justify-center gap-2 border-none rounded-full px-6 py-3 text-sm font-regular transition-colors ${
-                      !canGenerate || !flyerImage || isDownloading
-                        ? "bg-[hsl(0,0%,60%)] text-white cursor-not-allowed"
-                        : "bg-[hsl(0,0%,10%)] text-white cursor-pointer hover:bg-[hsl(0,0%,20%)]"
-                    }`}
-                  >
-                    {isDownloading ? "Preparing..." : "Download"}
-                    <img
-                      src="/Halorai Dev/Icons/weui_arrow-outlined-forward.svg"
-                      alt="Forward"
-                      className="w-4 h-4 pl-1"
-                    />
-                  </button>
-
-                  {isDownloadOpen && flyerImage ? (
-                    <div className="absolute right-0 mt-2 w-full bg-white border border-[hsl(0,0%,90%)] rounded-2xl shadow-lg p-2 z-20">
-                      <button
-                        onClick={() => void handleDownload("png")}
-                        className="w-full text-left px-3 py-2 rounded-xl text-sm text-[hsl(0,0%,10%)] hover:bg-[hsl(0,0%,97%)] transition-colors"
-                      >
-                        PNG
-                      </button>
-                      <button
-                        onClick={() => void handleDownload("jpg")}
-                        className="w-full text-left px-3 py-2 rounded-xl text-sm text-[hsl(0,0%,10%)] hover:bg-[hsl(0,0%,97%)] transition-colors"
-                      >
-                        JPG
-                      </button>
-                      <button
-                        onClick={() => void handleDownload("pdf")}
-                        className="w-full text-left px-3 py-2 rounded-xl text-sm text-[hsl(0,0%,10%)] hover:bg-[hsl(0,0%,97%)] transition-colors"
-                      >
-                        PDF (clear view)
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
             </div>
           </div>
-
-          {/* Row 3: masked local inpaint (does not replace full-flyer text edit above) */}
-          {flyerImage ? (
-            <div className="mt-8 border-t border-[hsl(0,0%,90%)] pt-6">
-              <h3 className="mb-1 text-sm font-semibold text-[hsl(0,0%,10%)]">Paint to edit (masked region)</h3>
-              <p className="mb-4 max-w-[42rem] text-xs text-[hsl(0,0%,48%)]">
-                Brush the areas you want changed, add a short prompt, then apply. The rest of the flyer stays
-                unchanged. This uses a separate inpainting call from the full-flyer &quot;Edit&quot; above.
-              </p>
-              <FlyerInpaintEditor flyerImage={flyerImage} resetKey={flyerKey} setFlyerImage={setFlyerImage} />
-            </div>
-          ) : null}
         </div>
       </div>
     </AppLayout>

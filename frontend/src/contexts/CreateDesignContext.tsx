@@ -102,6 +102,10 @@ type CreateDesignState = {
   backgroundRefinementNotes: string;
   setBackgroundRefinementNotes: (next: string) => void;
 
+  /** Step 3 reference image (optional); carried into Step 3ii insert when navigating forward. */
+  conceptReferenceImage: File | null;
+  setConceptReferenceImage: React.Dispatch<React.SetStateAction<File | null>>;
+
   baseColourChoice: BaseColourChoice;
   setBaseColourChoice: React.Dispatch<React.SetStateAction<BaseColourChoice>>;
 };
@@ -134,6 +138,8 @@ const LS_BASE_COLOUR_CHOICE = "createDesign_baseColourChoice_v1";
 
 const IDB_FLYER_IMAGE = "flyerImage_v1";
 const IDB_BACKGROUND_PREVIEW = "backgroundPreview_v1";
+const IDB_CONCEPT_REFERENCE = "conceptReference_v1";
+const LS_CONCEPT_REFERENCE_META = "createDesign_conceptReferenceMeta_v1";
 
 /** Must match Step 3ii MAX_BG_GENERATIONS */
 const BG_HIST_STORAGE_SLOTS = 3;
@@ -236,6 +242,7 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
   const [backgroundRefinementNotes, setBackgroundRefinementNotes] = useState<string>(
     () => localStorage.getItem(LS_BACKGROUND_REFINEMENT) || ""
   );
+  const [conceptReferenceImage, setConceptReferenceImage] = useState<File | null>(null);
   const [baseColourChoice, setBaseColourChoice] = useState<BaseColourChoice>(() =>
     parseBaseColourChoice(localStorage.getItem(LS_BASE_COLOUR_CHOICE))
   );
@@ -355,6 +362,15 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
           }
         }
 
+        let hydratedConceptRef: File | null = null;
+        const conceptRefMeta = _safeJsonParse<{ name: string; type: string; lastModified: number }>(
+          localStorage.getItem(LS_CONCEPT_REFERENCE_META)
+        );
+        if (conceptRefMeta) {
+          const refFile = await getFile(IDB_CONCEPT_REFERENCE);
+          if (refFile) hydratedConceptRef = refFile;
+        }
+
         let hydratedBg: FlyerImage | null = null;
         if (hydratedHist && hydratedHist.entries.length > 0) {
           const cur = hydratedHist.entries[hydratedHist.index];
@@ -387,6 +403,7 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
           if (cur?.key) setBackgroundPreviewKey(cur.key);
         }
         setBackgroundPreviewImage(hydratedBg);
+        setConceptReferenceImage(hydratedConceptRef);
 
         prevLogoIdsRef.current = new Set(hydratedLogos.map((l) => l.id));
         prevMinisterAvatarIdsRef.current = new Set(hydratedMinisters.map((m) => m.avatar.id));
@@ -425,6 +442,9 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
     setBackgroundBlendMode("soft_light");
     setBackgroundBlendOpacity(0.45);
     setBackgroundRefinementNotes("");
+    setConceptReferenceImage(null);
+    localStorage.removeItem(LS_CONCEPT_REFERENCE_META);
+    void del(IDB_CONCEPT_REFERENCE);
     setFlyerImage(null);
     setFlyerKey("");
     setBaseColourChoice(null);
@@ -564,6 +584,24 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     if (!assetsHydrated) return;
+    if (!conceptReferenceImage) {
+      localStorage.removeItem(LS_CONCEPT_REFERENCE_META);
+      void del(IDB_CONCEPT_REFERENCE);
+      return;
+    }
+    void putFile(IDB_CONCEPT_REFERENCE, conceptReferenceImage);
+    localStorage.setItem(
+      LS_CONCEPT_REFERENCE_META,
+      JSON.stringify({
+        name: conceptReferenceImage.name,
+        type: conceptReferenceImage.type || "image/png",
+        lastModified: conceptReferenceImage.lastModified || Date.now(),
+      })
+    );
+  }, [assetsHydrated, conceptReferenceImage]);
+
+  useEffect(() => {
+    if (!assetsHydrated) return;
     // Persist Step 2 logos to IndexedDB + localStorage refs.
     const current = new Set(logos.map((l) => l.id));
     const prev = prevLogoIdsRef.current;
@@ -648,6 +686,8 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
       setBackgroundBlendOpacity,
       backgroundRefinementNotes,
       setBackgroundRefinementNotes,
+      conceptReferenceImage,
+      setConceptReferenceImage,
       baseColourChoice,
       setBaseColourChoice,
     }),
@@ -659,6 +699,7 @@ export function CreateDesignProvider({ children }: { children: React.ReactNode }
       backgroundPreviewImage,
       backgroundPreviewKey,
       backgroundRefinementNotes,
+      conceptReferenceImage,
       baseColourChoice,
       concepts,
       conceptsKey,

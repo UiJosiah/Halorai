@@ -12,13 +12,14 @@ import {
   type FlyerImagePayload,
 } from "@/lib/api";
 import { downloadFlyer } from "@/lib/downloadFlyer";
+import { pickSingleImageFile } from "@/lib/singleImagePick";
 import ArcLoader from "@/components/ArcLoader";
 
 function buildBackgroundPrompt(
   concept: string,
   theme: string,
   refinement: string,
-  opts?: { hasReferenceImages: boolean }
+  opts?: { hasReferenceImages: boolean; includesCurrentBackground?: boolean }
 ): string {
   const lines = [
     "Use simple, clear English. Generate ONE portrait 4:5 image (Instagram-style aspect ratio) that is ONLY a flyer background.",
@@ -27,11 +28,20 @@ function buildBackgroundPrompt(
     "Strong lighting, cinematic mood, visually striking.",
   ];
   if (opts?.hasReferenceImages) {
-    lines.push(
-      "",
-      "Reference images are attached in order. The first reference may be the current AI background to revise; any following images are user uploads (mood, palette, texture, or composition hints).",
-      "Follow the user-written instructions. Output must remain a clean background with no overlaid text."
-    );
+    if (opts.includesCurrentBackground) {
+      lines.push(
+        "",
+        "Reference images are attached in order. The first reference may be the current AI background to revise; any following images are user uploads (mood, palette, texture, or composition hints).",
+        "Follow the user-written instructions. Output must remain a clean background with no overlaid text."
+      );
+    } else {
+      lines.push(
+        "",
+        "A user reference image is attached (mood, palette, texture, layout, or style hints).",
+        "Use it together with the core visual idea below — interpret the concept text as instructions for how to use the reference.",
+        "Output must remain a clean background with no overlaid text."
+      );
+    }
   }
   lines.push("", "Core visual idea:", concept.trim());
   if (theme.trim()) {
@@ -183,6 +193,8 @@ const CreateDesignStep3ii = () => {
     setBackgroundBlendMode: setBlendMode,
     backgroundBlendOpacity: blendOpacity,
     setBackgroundBlendOpacity: setBlendOpacity,
+    conceptReferenceImage,
+    setConceptReferenceImage,
   } = useCreateDesign();
 
   const theme = eventDetails.theme?.trim() || "";
@@ -208,6 +220,13 @@ const CreateDesignStep3ii = () => {
     };
   }, [chatInsertPreviewUrl]);
 
+  /** Reference image attached on Step 3 (optional). */
+  useEffect(() => {
+    if (conceptReferenceImage) {
+      setChatInsertImage(conceptReferenceImage);
+    }
+  }, [conceptReferenceImage]);
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [isBlending, setIsBlending] = useState(false);
   const [error, setError] = useState("");
@@ -216,41 +235,48 @@ const CreateDesignStep3ii = () => {
   const inFlightRef = useRef(false);
   /** Last raw AI output for this history tip — required so blend tweaks don't stack on an already-blended image. */
   const rawAiImageRef = useRef<FlyerImage | null>(null);
-  const baseCacheKey = useMemo(() => cacheKey(concept, theme, "", ""), [concept, theme]);
-  const [generationsUsed, setGenerationsUsed] = useState(() => loadStep3iiGenCount(baseCacheKey));
+  const userReferenceFile = conceptReferenceImage ?? chatInsertImage;
+  const hasAttachedReference = !!userReferenceFile;
+  /** Concept + theme only — attachment must not invalidate an existing background when returning from Step 3. */
+  const conceptThemeKey = useMemo(() => cacheKey(concept, theme, "", ""), [concept, theme]);
+  const initialGenRequestKey = useMemo(
+    () => cacheKey(concept, theme, "", sendRefExtra(userReferenceFile, false)),
+    [concept, theme, userReferenceFile]
+  );
+  const [generationsUsed, setGenerationsUsed] = useState(() => loadStep3iiGenCount(conceptThemeKey));
   const generationsUsedRef = useRef(0);
   generationsUsedRef.current = generationsUsed;
   const editsRemaining = Math.max(0, MAX_BG_GENERATIONS - generationsUsed);
 
   useEffect(() => {
-    saveStep3iiGenCount(baseCacheKey, generationsUsed);
-  }, [baseCacheKey, generationsUsed]);
+    saveStep3iiGenCount(conceptThemeKey, generationsUsed);
+  }, [conceptThemeKey, generationsUsed]);
 
   /** Snapshots of successful generations — stored on context so Step 3 ↔ 3ii keeps versions + raw AI for blend. */
   const bgHistRef = useRef(bgHist);
   bgHistRef.current = bgHist;
 
-  const prevBaseCacheKeyRef = useRef<string | null>(null);
+  const prevConceptThemeKeyRef = useRef<string | null>(null);
   /** Prevents context-hydration effect from racing with append after a new generation. */
   const historyInitFromContextRef = useRef(false);
 
   useEffect(() => {
-    if (prevBaseCacheKeyRef.current === null) {
-      prevBaseCacheKeyRef.current = baseCacheKey;
+    if (prevConceptThemeKeyRef.current === null) {
+      prevConceptThemeKeyRef.current = conceptThemeKey;
       return;
     }
-    if (prevBaseCacheKeyRef.current !== baseCacheKey) {
-      prevBaseCacheKeyRef.current = baseCacheKey;
+    if (prevConceptThemeKeyRef.current !== conceptThemeKey) {
+      prevConceptThemeKeyRef.current = conceptThemeKey;
       rawAiImageRef.current = null;
       setBgHist({ entries: [], index: -1 });
       setBlendMode("soft_light");
       setBlendOpacity(0.45);
       historyInitFromContextRef.current = false;
-      const nextCount = loadStep3iiGenCount(baseCacheKey);
+      const nextCount = loadStep3iiGenCount(conceptThemeKey);
       generationsUsedRef.current = nextCount;
       setGenerationsUsed(nextCount);
     }
-  }, [baseCacheKey, setBgHist, setBlendMode, setBlendOpacity]);
+  }, [conceptThemeKey, setBgHist, setBlendMode, setBlendOpacity]);
 
   /** Seed history once from context when a preview exists but nothing is in the stack yet (e.g. IDB). */
   useEffect(() => {
@@ -360,7 +386,14 @@ const CreateDesignStep3ii = () => {
       setError("");
       try {
         const hasRefs = (referenceImages?.length ?? 0) > 0;
-        const prompt = buildBackgroundPrompt(concept, theme, refinement, { hasReferenceImages: hasRefs });
+        const includesCurrentBackground =
+          hasRefs &&
+          !!backgroundPreviewImage?.base64 &&
+          referenceImages!.some((r) => r.base64 === backgroundPreviewImage.base64);
+        const prompt = buildBackgroundPrompt(concept, theme, refinement, {
+          hasReferenceImages: hasRefs,
+          includesCurrentBackground,
+        });
         const res = await aiGenerateImage({
           prompt,
           aspectRatio: "4:5",
@@ -401,29 +434,78 @@ const CreateDesignStep3ii = () => {
         inFlightRef.current = false;
       }
     },
-    [applySwatchBlend, concept, setBackgroundPreviewImage, setBackgroundPreviewKey, setBgHist, shouldBlendSwatch, theme]
+    [
+      applySwatchBlend,
+      backgroundPreviewImage,
+      concept,
+      setBackgroundPreviewImage,
+      setBackgroundPreviewKey,
+      setBgHist,
+      shouldBlendSwatch,
+      theme,
+    ]
   );
 
+  /** Up to one user attachment; on refinements, also send the current generated background when requested. */
+  const buildGenerationRefs = useCallback(
+    async (includeCurrentBackground: boolean): Promise<AiImageReference[]> => {
+      const refs: AiImageReference[] = [];
+      if (includeCurrentBackground && backgroundPreviewImage?.base64) {
+        refs.push({
+          mimeType: backgroundPreviewImage.mimeType,
+          base64: backgroundPreviewImage.base64,
+        });
+      }
+      const refFile = conceptReferenceImage ?? chatInsertImage;
+      if (refFile) {
+        refs.push(await fileToRef(refFile));
+      }
+      return refs;
+    },
+    [backgroundPreviewImage, chatInsertImage, conceptReferenceImage]
+  );
+
+  const runInitialGeneration = useCallback(async () => {
+    const refs = await buildGenerationRefs(false);
+    return runGeneration("", initialGenRequestKey, refs.length > 0 ? refs : undefined);
+  }, [buildGenerationRefs, initialGenRequestKey, runGeneration]);
+
   // Auto-generate only when we still need a base image for this concept+theme.
-  // Same concept+theme must never re-run AI (refinements use different keys but same c,t).
-  // If `backgroundPreviewKey` is empty or not JSON, `stored` is null — we must still skip when a preview
-  // exists, otherwise history navigation (back/forward) would look like "Revert calls AI again".
+  // Attachment on Step 3 does not invalidate an existing background (compare c+t only, not ref extra).
   useEffect(() => {
     if (!assetsHydrated || !concept.trim()) return;
     if (generationsUsedRef.current >= MAX_BG_GENERATIONS) return;
     const hist = bgHistRef.current;
     // Revert/forward only change which snapshot is shown — never treat that as "missing image" and auto-call AI.
     if (hist.entries.length > 0 && (hist.index < 0 || hist.index < hist.entries.length - 1)) return;
-    const baseParts = parseCacheKey(baseCacheKey);
+    const themeParts = parseCacheKey(conceptThemeKey);
     const stored = backgroundPreviewKey ? parseCacheKey(backgroundPreviewKey) : null;
     const havePreview = !!backgroundPreviewImage?.base64?.trim();
     const sameConceptTheme =
       havePreview &&
-      !!baseParts &&
-      (!stored || (stored.c === baseParts.c && stored.t === baseParts.t));
+      !!themeParts &&
+      (!stored || (stored.c === themeParts.c && stored.t === themeParts.t));
     if (sameConceptTheme) return;
-    void runGeneration("", baseCacheKey);
-  }, [assetsHydrated, backgroundPreviewImage, backgroundPreviewKey, baseCacheKey, concept, runGeneration]);
+
+    let cancelled = false;
+    (async () => {
+      const refs = await buildGenerationRefs(false);
+      if (cancelled) return;
+      await runGeneration("", initialGenRequestKey, refs.length > 0 ? refs : undefined);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assetsHydrated,
+    backgroundPreviewImage,
+    backgroundPreviewKey,
+    buildGenerationRefs,
+    concept,
+    conceptThemeKey,
+    initialGenRequestKey,
+    runGeneration,
+  ]);
 
   /** Text only, image only, or both; image-only requires a current AI preview to revise. */
   const atGenerationLimit = generationsUsed >= MAX_BG_GENERATIONS;
@@ -440,16 +522,7 @@ const CreateDesignStep3ii = () => {
     const extra = sendRefExtra(chatInsertImage, includeBg);
     const key = cacheKey(concept, theme, refinement, extra);
 
-    const refs: AiImageReference[] = [];
-    if (backgroundPreviewImage) {
-      refs.push({
-        mimeType: backgroundPreviewImage.mimeType,
-        base64: backgroundPreviewImage.base64,
-      });
-    }
-    if (chatInsertImage) {
-      refs.push(await fileToRef(chatInsertImage));
-    }
+    const refs = await buildGenerationRefs(!!backgroundPreviewImage);
     const ok =
       refs.length === 0 ? await runGeneration(refinement, key) : await runGeneration(refinement, key, refs);
     if (ok) {
@@ -481,15 +554,16 @@ const CreateDesignStep3ii = () => {
   };
 
   const handleChatInsertPick = (list: FileList | null) => {
-    if (!list?.length) return;
-    const f = Array.from(list).find((file) => file.type.startsWith("image/"));
+    const f = pickSingleImageFile(list);
     if (!f) return;
     setChatInsertImage(f);
+    setConceptReferenceImage(f);
     if (chatInsertInputRef.current) chatInsertInputRef.current.value = "";
   };
 
   const handleClearChatInsert = () => {
     setChatInsertImage(null);
+    setConceptReferenceImage(null);
     if (chatInsertInputRef.current) chatInsertInputRef.current.value = "";
   };
 
@@ -520,11 +594,11 @@ const CreateDesignStep3ii = () => {
       <StepperProgress currentStep={3} />
 
       <div className="px-4 xs:px-0">
-        <div className="border border-[hsl(0,0%,80%)] rounded-2xl p-6 md:p-8">
-          <div className="grid grid-cols-1 gap-y-8 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] md:gap-x-6 lg:grid-cols-[minmax(0,21rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,27rem)_minmax(0,1fr)] max-md:items-center max-md:justify-items-center">
+        <div className="min-w-0 overflow-hidden border border-[hsl(0,0%,80%)] rounded-2xl p-4 sm:p-6 md:p-8">
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,auto)] md:items-stretch lg:gap-8 max-md:items-center max-md:justify-items-center">
             {/* Left: background preview + overlay controls */}
             <div className="flex min-w-0 w-full max-w-full flex-col max-md:items-center">
-              <div className="relative mx-auto aspect-[4/5] w-full max-w-[min(100%,20rem)] rounded-2xl bg-[hsl(0,0%,88%)] ring-1 ring-[hsl(0,0%,90%)] md:mx-0 md:max-w-none">
+              <div className="relative mx-auto aspect-[4/5] w-full min-w-0 max-w-full rounded-2xl bg-[hsl(0,0%,88%)] ring-1 ring-[hsl(0,0%,90%)] md:mx-0">
                 <div className="absolute inset-0 overflow-hidden rounded-2xl">
                   {swatchPlaceholderUrl && !backgroundPreviewImage ? (
                     <img
@@ -547,7 +621,9 @@ const CreateDesignStep3ii = () => {
                         swatchPlaceholderUrl && !backgroundPreviewImage ? "bg-black/25" : "bg-black/40"
                       }`}
                     >
+                      <div className="w-[min(100%,11.25rem)] max-w-full">
                       <ArcLoader
+                        fluid
                         size={180}
                         label={
                           !assetsHydrated ? (
@@ -563,12 +639,13 @@ const CreateDesignStep3ii = () => {
                         spinning={!assetsHydrated || isGenerating || isBlending}
                         spinDurationMs={2600}
                       />
+                      </div>
                     </div>
                   ) : null}
                 </div>
 
-                <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-[2] flex justify-end">
-                  <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-white/40 px-2 py-2 shadow-lg backdrop-blur-xl">
+                <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-[2] flex justify-end sm:bottom-3 sm:left-3 sm:right-3">
+                  <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-2xl bg-white/40 px-1.5 py-1.5 shadow-lg backdrop-blur-xl sm:gap-2 sm:px-2 sm:py-2">
                     <button
                       type="button"
                       aria-label="Previous generated background"
@@ -583,7 +660,7 @@ const CreateDesignStep3ii = () => {
                       onClick={handleHistoryBack}
                       className="cursor-pointer border-none bg-transparent p-1 transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <img src="/Halorai Dev/Icons/grommet-icons_revert.svg" alt="" className="h-7 w-7" aria-hidden />
+                      <img src="/Halorai Dev/Icons/grommet-icons_revert.svg" alt="" className="h-5 w-5 sm:h-7 sm:w-7" aria-hidden />
                     </button>
                     <button
                       type="button"
@@ -603,7 +680,7 @@ const CreateDesignStep3ii = () => {
                       <img
                         src="/Halorai Dev/Icons/grommet-icons_revert.svg"
                         alt=""
-                        className="h-7 w-7 scale-x-[-1]"
+                        className="h-5 w-5 scale-x-[-1] sm:h-7 sm:w-7"
                         aria-hidden
                       />
                     </button>
@@ -618,7 +695,7 @@ const CreateDesignStep3ii = () => {
                         <img
                           src="/Halorai Dev/Icons/material-symbols-light_download.svg"
                           alt={isDownloading ? "Preparing" : "Download"}
-                          className="h-12 w-12"
+                          className="h-8 w-8 sm:h-10 sm:w-10 md:h-12 md:w-12"
                         />
                       </button>
 
@@ -658,7 +735,7 @@ const CreateDesignStep3ii = () => {
                   <button
                     type="button"
                     disabled={atGenerationLimit}
-                    onClick={() => void runGeneration("", baseCacheKey)}
+                    onClick={() => void runInitialGeneration()}
                     className="ml-3 rounded-full border-none bg-[hsl(0,0%,10%)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[hsl(0,0%,25%)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Retry
@@ -668,10 +745,10 @@ const CreateDesignStep3ii = () => {
             </div>
 
             {/* Right Column - Create Background Concept */}
-            <div className="flex min-w-0 flex-col max-md:items-center max-md:w-full">
+            <div className="flex min-w-0 w-full max-w-full flex-col max-md:items-center max-md:w-full">
 
               {shouldBlendSwatch ? (
-                <div className="mb-4 flex w-full max-w-[min(100%,28rem)] flex-col gap-3 rounded-xl border border-[hsl(0,0%,90%)] bg-[hsl(0,0%,98%)] p-4">
+                <div className="mb-4 flex w-full min-w-0 max-w-full flex-col gap-3 rounded-xl border border-[hsl(0,0%,90%)] bg-[hsl(0,0%,98%)] p-3 sm:p-4">
                   <p className="text-xs font-medium text-[hsl(0,0%,35%)]">
                     Base colour blend
                   </p>
@@ -705,27 +782,27 @@ const CreateDesignStep3ii = () => {
                   </label>
                 </div>
               ) : baseColourChoice === "skip" ? (
-                <p className="mb-4 max-w-[420px] text-xs text-[hsl(0,0%,50%)]">
+                <p className="mb-4 max-w-full text-xs text-[hsl(0,0%,50%)]">
                   Colour blend is off (you chose Skip on Step 3). The AI background is shown alone.
                 </p>
               ) : null}
 
-              <h2 className="text-lg md:text-xl font-bold text-[hsl(0,0%,10%)] mb-2">
+              <h2 className="mb-2 text-base font-bold text-[hsl(0,0%,10%)] md:text-lg lg:text-xl">
                 Edit Background Concept
               </h2>
-              <p className="text-sm text-[hsl(0,0%,55%)] mb-2 max-w-[420px]">
-                Prompt it, edit it, upload images, and shape the background exactly how you imagine it
+              <p className="mb-2 max-w-full text-sm text-[hsl(0,0%,55%)]">
+                Prompt it, edit it, attach one reference image, and shape the background exactly how you imagine it
               </p>
 
               {/* Text to show generation limit */}
-              <p className="mb-4 text-xs text-[hsl(0,0%,45%)] max-w-[420px]">
+              <p className="mb-4 max-w-full text-xs text-[hsl(0,0%,45%)]">
                 {atGenerationLimit
                   ? "You have used all 3 background generations (first load + 2 edits). Use the arrows on the preview to review versions, or Continue."
                   : `${editsRemaining} generation${editsRemaining === 1 ? "" : "s"} left for this concept (first image + up to 2 edits).`}
               </p>
 
               {/* Chat-style textarea + single insert image */}
-              <div className="flex min-h-[220px] w-full min-w-0 max-w-[min(100%,22.5rem)] flex-col rounded-2xl border border-[hsl(0,0%,92%)] bg-[hsl(0,0%,97%)] p-4 sm:max-w-[min(100%,24.5rem)] md:max-w-[min(100%,26.5rem)] lg:max-w-[min(100%,28rem)]">
+              <div className="flex min-h-[min(220px,40vh)] w-full min-w-0 max-w-full flex-col rounded-2xl border border-[hsl(0,0%,92%)] bg-[hsl(0,0%,97%)] p-3 sm:p-4">
                 <input
                   ref={chatInsertInputRef}
                   type="file"
@@ -766,8 +843,18 @@ const CreateDesignStep3ii = () => {
                 <div className="mt-2 flex items-center justify-end gap-3">
                   <button
                     type="button"
-                    title="Insert one image (reference for the AI)"
-                    disabled={atGenerationLimit || isGenerating || isBlending || !assetsHydrated}
+                    title={
+                      hasAttachedReference
+                        ? "Remove the image above to attach a different one"
+                        : "Attach one reference image for the AI"
+                    }
+                    disabled={
+                      atGenerationLimit ||
+                      isGenerating ||
+                      isBlending ||
+                      !assetsHydrated ||
+                      hasAttachedReference
+                    }
                     onClick={() => chatInsertInputRef.current?.click()}
                     className="cursor-pointer rounded-full border-none bg-white p-2 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -791,13 +878,15 @@ const CreateDesignStep3ii = () => {
                   </button>
                 </div>
               </div>
+            </div>
 
-              {/* Buttons - inside the right column on mobile so they stay within content bounds */}
-              <div className="flex items-center justify-end gap-3 pt-6 w-full max-md:max-w-[min(100%,22.5rem)]">
+            {/* Third column — navigation fixed to bottom of card */}
+            <div className="flex w-full min-w-0 max-w-full flex-col justify-end md:min-h-full max-md:max-w-full">
+              <div className="flex flex-wrap items-center justify-end gap-2 max-md:pt-2 sm:gap-3">
                 <button
                   type="button"
                   onClick={() => navigate("/create-design/step-3")}
-                  className="flex cursor-pointer items-center gap-2 rounded-full border-none bg-[hsl(0,0%,95%)] px-4 py-3 text-xs font-medium text-[hsl(0,0%,10%)] whitespace-nowrap transition-all duration-150 ease-out hover:scale-[1.01] hover:opacity-90 active:scale-[0.99]"
+                  className="flex min-w-0 shrink cursor-pointer items-center gap-1.5 rounded-full border-none bg-[hsl(0,0%,95%)] px-3 py-2.5 text-[11px] font-medium text-[hsl(0,0%,10%)] transition-all duration-150 ease-out hover:scale-[1.01] hover:opacity-90 active:scale-[0.99] sm:gap-2 sm:px-4 sm:py-3 sm:text-xs"
                 >
                   <img src="/Halorai Dev/Icons/weui_arrow-outlined.svg" alt="Back" className="h-3.5 w-3.5 brightness-0" />
                   Go back
@@ -809,7 +898,7 @@ const CreateDesignStep3ii = () => {
                     setBackgroundRefinementNotes(message.trim());
                     navigate("/create-design/step-4");
                   }}
-                  className={`flex items-center gap-2 rounded-full border-none px-4 py-3 text-xs font-medium text-white whitespace-nowrap transition-all duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] ${
+                  className={`flex min-w-0 shrink items-center gap-1.5 rounded-full border-none px-3 py-2.5 text-[11px] font-medium text-white transition-all duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] sm:gap-2 sm:px-4 sm:py-3 sm:text-xs ${
                     !assetsHydrated || isGenerating || isBlending || !backgroundPreviewImage
                       ? "cursor-not-allowed bg-[hsl(0,0%,60%)]"
                       : "cursor-pointer bg-[hsl(0,0%,10%)] hover:bg-[hsl(0,0%,20%)]"

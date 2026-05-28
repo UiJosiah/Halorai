@@ -5,6 +5,17 @@
   justify-content: center;
 }
 
+.arcLoader--fluid {
+  width: 100%;
+  aspect-ratio: 1;
+  height: auto;
+}
+
+.arcLoader--fluid .arcLoader__svg {
+  width: 100%;
+  height: 100%;
+}
+
 .arcLoader__svg {
   display: block;
   transform: rotate(-90deg);

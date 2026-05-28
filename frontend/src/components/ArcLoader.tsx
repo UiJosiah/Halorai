@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 
 type Props = {
   size?: number;
+  /** Shrink to fit parent width (capped at `size`). Parent should set width. */
+  fluid?: boolean;
   label?: ReactNode;
   spinning?: boolean;
   spinDurationMs?: number;
@@ -14,6 +16,7 @@ type Props = {
 
 export default function ArcLoader({
   size = 180,
+  fluid = false,
   label = "Processing...",
   spinning = true,
   spinDurationMs = 2600,
@@ -23,13 +26,17 @@ export default function ArcLoader({
 }: Props) {
   return (
     <div
-      className={`arcLoader ${className ?? ""}`}
-      style={{ width: size, height: size, ["--arcLoaderSpinDuration" as any]: `${spinDurationMs}ms` }}
+      className={`arcLoader ${fluid ? "arcLoader--fluid" : ""} ${className ?? ""}`}
+      style={
+        fluid
+          ? { maxWidth: size, ["--arcLoaderSpinDuration" as string]: `${spinDurationMs}ms` }
+          : { width: size, height: size, ["--arcLoaderSpinDuration" as string]: `${spinDurationMs}ms` }
+      }
     >
       <svg
         className="arcLoader__svg"
-        width={size}
-        height={size}
+        width={fluid ? undefined : size}
+        height={fluid ? undefined : size}
         viewBox="0 0 269 269"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"

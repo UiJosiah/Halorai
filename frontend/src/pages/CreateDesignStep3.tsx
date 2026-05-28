@@ -6,9 +6,11 @@ import StepperProgress from "@/components/StepperProgress";
 import { CUSTOM_CONCEPT_ID, useCreateDesign } from "@/contexts/CreateDesignContext";
 import { aiGenerateText } from "@/lib/api";
 import ArcLoader from "@/components/ArcLoader";
+import { pickSingleImageFile } from "@/lib/singleImagePick";
 
 /** Column 1: ArcLoader slot (same layout as original standalone loader). */
-const LEFT_CONTENT_SLOT = "ml-2 md:ml-4 w-[220px] min-h-[220px] shrink-0 flex flex-col";
+const LEFT_CONTENT_SLOT =
+  "ml-0 flex w-full min-w-0 max-w-full min-h-[min(220px,45vw)] shrink flex-col items-center md:items-start md:ml-2 lg:ml-4";
 
 /** Mood board in left column — same responsive card pattern as `HaloRAI` community grid. */
 const BASE_COLOUR_IMAGES: { src: string; alt: string }[] = [
@@ -25,6 +27,33 @@ const BASE_COLOUR_IMAGES: { src: string; alt: string }[] = [
   { src: "/Halorai Dev/Base-colours/Base-colour_011.jpg", alt: "Colour sample" },
   { src: "/Halorai Dev/Base-colours/Base-colour_012.jpg", alt: "Colour sample" },
 ];
+
+/**
+ * Base colour swatches: 2 / 3 / 4 columns by width.
+ * Below md (stacked layout): up to 4 across when the row is wide enough.
+ * md+ (3-column page): 2 in the narrow left column, then 3 @950px, 4 @1400px.
+ */
+const SWATCH_GRID_CLASS =
+  "grid w-full min-w-0 grid-cols-2 gap-1.5 max-md:min-[520px]:max-md:grid-cols-3 max-md:min-[700px]:max-md:grid-cols-4 md:grid-cols-2 md:gap-2 min-[950px]:grid-cols-3 min-[1400px]:grid-cols-4";
+
+const MAX_SUGGEST_PER_THEME = 3;
+const LS_SUGGEST_COUNTS_BY_THEME = "createDesign_suggestCountsByTheme_v1";
+
+function loadSuggestCountsByTheme(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(LS_SUGGEST_COUNTS_BY_THEME);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = Math.floor(v);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 /** AI concepts: at most two short lines / brief phrases (enforced after parse for consistency). */
 function clampConceptDescription(raw: string): string {
@@ -56,15 +85,32 @@ const CreateDesignStep3 = () => {
     setSelectedConceptId,
     customConceptText,
     setCustomConceptText,
+    conceptReferenceImage,
+    setConceptReferenceImage,
     baseColourChoice,
     setBaseColourChoice,
   } = useCreateDesign();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string>("");
+  const [suggestCountsByTheme, setSuggestCountsByTheme] = useState<Record<string, number>>(loadSuggestCountsByTheme);
+  const conceptInsertInputRef = useRef<HTMLInputElement | null>(null);
+
+  const conceptInsertPreviewUrl = useMemo(
+    () => (conceptReferenceImage ? URL.createObjectURL(conceptReferenceImage) : null),
+    [conceptReferenceImage]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (conceptInsertPreviewUrl) URL.revokeObjectURL(conceptInsertPreviewUrl);
+    };
+  }, [conceptInsertPreviewUrl]);
 
   const theme = eventDetails.theme?.trim() || "";
   const eventName = eventDetails.eventName?.trim() || "";
   const desiredKey = useMemo(() => `${theme}||${eventName}`.trim(), [eventName, theme]);
+  const suggestCount = theme ? (suggestCountsByTheme[theme] ?? 0) : 0;
+  const atSuggestLimit = suggestCount >= MAX_SUGGEST_PER_THEME;
 
   const hasRequiredStep1Details = useMemo(() => {
     return (
@@ -90,6 +136,14 @@ const CreateDesignStep3 = () => {
   }, [selectedConceptId]);
 
   const inFlightRef = useRef(false);
+  const suggestCountRef = useRef(suggestCount);
+  useEffect(() => {
+    suggestCountRef.current = suggestCount;
+  }, [suggestCount]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_SUGGEST_COUNTS_BY_THEME, JSON.stringify(suggestCountsByTheme));
+  }, [suggestCountsByTheme]);
 
   useEffect(() => {
     if (!hasRequiredStep1Details) {
@@ -97,14 +151,19 @@ const CreateDesignStep3 = () => {
     }
   }, [hasRequiredStep1Details, navigate]);
 
+  useEffect(() => {
+    if (customConceptText.trim()) {
+      setSelectedConceptId(CUSTOM_CONCEPT_ID);
+    }
+  }, [customConceptText, setSelectedConceptId]);
+
   /** No AI suggestions yet (intro: explain + suggest card + custom). Cached 3 concepts counts as ready. */
   const showIntroLayout = concepts.length === 0 && !isAnalyzing;
   const hasColourDecision = baseColourChoice !== null;
   const lockConceptActions = showIntroLayout && !hasColourDecision;
 
   const generateConcepts = useCallback(
-    async (opts?: { force?: boolean }) => {
-      const force = !!opts?.force;
+    async () => {
       if (!hasRequiredStep1Details) return;
       if (inFlightRef.current) return;
       if (baseColourChoice === null) return;
@@ -114,34 +173,31 @@ const CreateDesignStep3 = () => {
         return;
       }
 
-      if (!force && conceptsKeyRef.current === desiredKey && conceptsRef.current.length === 3) {
-        if (!selectedConceptIdRef.current) setSelectedConceptId(conceptsRef.current[0]?.id ?? 1);
+      if (suggestCountRef.current >= MAX_SUGGEST_PER_THEME) {
+        setError(`You've used all ${MAX_SUGGEST_PER_THEME} AI suggestions for this theme. Edit the text or change the theme on Step 1.`);
         return;
       }
 
       inFlightRef.current = true;
       setError("");
       setIsAnalyzing(true);
-      setConcepts([]);
-      setSelectedConceptId(null);
 
       const prompt = [
-        "Generate exactly 3 visual background concepts for a church event flyer.",
+        "Generate exactly ONE visual background concept for a church event flyer.",
         "The THEME is the primary creative anchor. The event name is optional background context only — do not let long titles drive the imagery.",
         `Theme: ${JSON.stringify(theme)}`,
         eventName ? `Event name (light context only): ${JSON.stringify(eventName)}` : "",
         "",
         "Instructions (follow strictly):",
-        "- Each concept must express the THEME as one clear visual metaphor (a concrete scene or setting).",
-        "- Each `description` must be extremely concise: at most TWO lines in total, each line only a short phrase (no paragraphs, no numbered lists inside the string).",
-        "- Hard cap: each description under ~220 characters including spaces; if you would exceed that, stop earlier.",
-        "- Each `label` must be a very short title (a few words, under ~40 characters).",
-        "- The three concepts must be clearly different from each other; avoid generic stock ideas.",
+        "- The concept must express the THEME as one clear visual metaphor (a concrete scene or setting).",
+        "- The `description` must be extremely concise: at most TWO lines in total, each line only a short phrase (no paragraphs, no numbered lists inside the string).",
+        "- Hard cap: description under ~220 characters including spaces.",
+        "- `label` must be a very short title (a few words, under ~40 characters).",
         "- Do NOT mention text, layout, typography, logos, or UI — only the visual scene.",
         "- Use simple, clear English.",
         "",
         "Output (STRICT): Return ONLY valid JSON. No markdown. No extra keys.",
-        '[{"label":"Concept 1","description":"..."},{"label":"Concept 2","description":"..."},{"label":"Concept 3","description":"..."}]',
+        '{"label":"Suggested concept","description":"..."}',
       ]
         .filter(Boolean)
         .join("\n");
@@ -165,56 +221,62 @@ const CreateDesignStep3 = () => {
           }>;
         };
 
-        const next =
-          asConceptArray(parsed).length
-            ? asConceptArray(parsed)
-                .slice(0, 3)
-                .map((c, idx: number) => ({
-                  id: idx + 1,
-                  label: String((c.label as string | undefined) || `Concept ${idx + 1}`).trim().slice(0, 48),
-                  description: clampConceptDescription(
-                    String((c.description as string | undefined) || (c.text as string | undefined) || "")
-                  ),
-                }))
-                .filter((c) => c.description)
-            : txt
-                .split("\n")
-                .map((l) => l.trim())
-                .filter(Boolean)
-                .slice(0, 3)
-                .map((line, idx) => ({
-                  id: idx + 1,
-                  label: `Concept ${idx + 1}`,
-                  description: line.replace(/^[-*\d.)\s]+/, "").trim(),
-                }))
-                .filter((c) => c.description);
+        const parseOne = (): { label: string; description: string } | null => {
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            const o = parsed as { label?: unknown; description?: unknown; text?: unknown };
+            const description = clampConceptDescription(
+              String(o.description ?? o.text ?? "")
+            );
+            if (!description) return null;
+            return {
+              label: String(o.label ?? "Suggested concept").trim().slice(0, 48) || "Suggested concept",
+              description,
+            };
+          }
+          const fromArr = asConceptArray(parsed);
+          if (fromArr.length) {
+            const c = fromArr[0];
+            const description = clampConceptDescription(
+              String(c.description ?? c.text ?? "")
+            );
+            if (!description) return null;
+            return {
+              label: String(c.label ?? "Suggested concept").trim().slice(0, 48) || "Suggested concept",
+              description,
+            };
+          }
+          const line = txt
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean)[0];
+          if (!line) return null;
+          return {
+            label: "Suggested concept",
+            description: clampConceptDescription(line.replace(/^[-*\d.)\s]+/, "")),
+          };
+        };
 
-        const fallback = [
-          { id: 1, label: "Concept 1", description: clampConceptDescription(`Warm glow and soft light rays echoing "${theme}".`) },
-          { id: 2, label: "Concept 2", description: clampConceptDescription(`Open sky, gentle clouds, quiet light for "${theme}".`) },
-          { id: 3, label: "Concept 3", description: clampConceptDescription(`Bold abstract shapes and a strong focal light for "${theme}".`) },
-        ];
+        const one =
+          parseOne() ?? {
+            label: "Suggested concept",
+            description: clampConceptDescription(`Warm glow and soft light echoing "${theme}".`),
+          };
 
-        const hasAny = next.some((c) => c.description && c.description.trim().length > 0);
-        if (!txt || !hasAny) {
-          setError("AI returned no suggestions. Showing default concepts. You can retry.");
-        }
-
-        const filled = hasAny ? [...next] : [...fallback];
-        while (filled.length < 3) {
-          filled.push({
-            id: filled.length + 1,
-            label: `Concept ${filled.length + 1}`,
-            description: clampConceptDescription("A premium, modern abstract background that matches the theme mood."),
-          });
+        if (!txt || !one.description) {
+          setError("AI returned no suggestion. Showing a default concept. You can retry or edit the text.");
         }
 
         setConceptsKey(desiredKey);
-        setConcepts(filled.slice(0, 3));
-        setSelectedConceptId(filled[0]?.id ?? 1);
+        setConcepts([{ id: 1, label: one.label, description: one.description }]);
+        setCustomConceptText(one.description);
+        setSelectedConceptId(CUSTOM_CONCEPT_ID);
+        setSuggestCountsByTheme((prev) => ({
+          ...prev,
+          [theme]: Math.min(MAX_SUGGEST_PER_THEME, (prev[theme] ?? 0) + 1),
+        }));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Failed to generate concepts.";
-        if (conceptsRef.current.length > 0 && conceptsKeyRef.current === desiredKey && !force) {
+        if (customConceptText.trim() && conceptsKeyRef.current === desiredKey) {
           setError("");
           return;
         }
@@ -228,22 +290,44 @@ const CreateDesignStep3 = () => {
     },
     [
       baseColourChoice,
+      customConceptText,
       desiredKey,
       eventName,
       hasRequiredStep1Details,
       setConcepts,
       setConceptsKey,
+      setCustomConceptText,
       setSelectedConceptId,
       theme,
     ]
   );
 
-  const selected = selectedConceptId ?? concepts[0]?.id ?? null;
-  const canContinue =
-    !!selected && !(selected === CUSTOM_CONCEPT_ID && !customConceptText.trim());
+  const hasCustomConcept = !!customConceptText.trim();
+  const canContinue = hasCustomConcept && !lockConceptActions;
 
-  /** Left-column analyzer: show while generating and keep visible after concepts load (done state). */
-  const showLeftAnalyzer = isAnalyzing || concepts.length > 0;
+  const handleConceptInputChange = (value: string) => {
+    setCustomConceptText(value);
+    setSelectedConceptId(CUSTOM_CONCEPT_ID);
+  };
+
+  const suggestConceptDisabled = !theme || lockConceptActions || isAnalyzing || atSuggestLimit;
+
+  const hasAttachedReference = !!conceptReferenceImage;
+
+  const handleConceptInsertPick = (list: FileList | null) => {
+    const f = pickSingleImageFile(list);
+    if (!f) return;
+    setConceptReferenceImage(f);
+    if (conceptInsertInputRef.current) conceptInsertInputRef.current.value = "";
+  };
+
+  const handleClearConceptInsert = () => {
+    setConceptReferenceImage(null);
+    if (conceptInsertInputRef.current) conceptInsertInputRef.current.value = "";
+  };
+
+  /** Left-column analyzer: show while generating and after a suggestion is ready. */
+  const showLeftAnalyzer = isAnalyzing || hasCustomConcept;
 
   return (
     <AppLayout>
@@ -251,22 +335,24 @@ const CreateDesignStep3 = () => {
       <StepperProgress currentStep={3} />
 
       <div className="px-4 xs:px-0">
-        <div className="border border-[hsl(0,0%,80%)] rounded-2xl p-6 md:p-8">
-          <div className="grid grid-cols-1 md:grid-cols-[0.54fr_1fr] gap-y-8 md:gap-x-6">
+        <div className="min-w-0 overflow-hidden border border-[hsl(0,0%,80%)] rounded-2xl p-4 sm:p-6 md:p-8">
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,auto)] md:items-stretch lg:gap-8">
             {/* Left Column */}
-            <div className="flex min-w-0 flex-col">
+            <div className="flex min-w-0 w-full max-w-full flex-col">
               <h2 className="mb-1 text-lg font-semibold text-[hsl(0,0%,10%)] md:mb-5 md:text-xl">
                 Background Concept
               </h2>
-              <p className="text-sm text-[hsl(0,0%,55%)] mb-12 max-w-[280px]">
-                Please Pick a concept from the suggestions or enter your preferred concept
+              <p className="mb-8 max-w-full text-sm text-[hsl(0,0%,55%)] md:mb-12">
+                Pick a base colour, then describe your background or use Suggest concept
               </p>
 
               <div className="mt-4 flex w-full min-w-0 flex-col items-start justify-start gap-6">
                 {showLeftAnalyzer ? (
                   <div className={LEFT_CONTENT_SLOT}>
                     <div className="flex flex-1 flex-col items-center justify-start pt-0">
+                      <div className="w-full max-w-[min(100%,11.25rem)]">
                       <ArcLoader
+                        fluid
                         size={180}
                         label={
                           isAnalyzing ? (
@@ -282,6 +368,7 @@ const CreateDesignStep3 = () => {
                         spinning={isAnalyzing}
                         spinDurationMs={2600}
                       />
+                      </div>
                     </div>
                   </div>
                 ) : null}
@@ -289,8 +376,8 @@ const CreateDesignStep3 = () => {
               <h2 className="text-lg font-semibold text-[hsl(0,0%,10%)] md:text-xl">
                 Select Base Colour
               </h2>
-                <div className="ml-0 w-full min-w-0 max-w-full md:ml-4 md:max-w-[min(100%,340px)] lg:max-w-[min(100%,360px)] xl:max-w-[min(100%,380px)]">
-                  <div className="grid w-full grid-cols-4 gap-1.5 md:grid-cols-2 md:gap-2 min-[950px]:grid-cols-3 min-[1400px]:grid-cols-4">
+                <div className="ml-0 w-full min-w-0 max-w-full md:ml-2 lg:ml-4">
+                  <div className={SWATCH_GRID_CLASS}>
                     {BASE_COLOUR_IMAGES.map((item) => {
                       const selected = baseColourChoice === item.src;
                       return (
@@ -300,7 +387,7 @@ const CreateDesignStep3 = () => {
                           aria-pressed={selected}
                           aria-label={`Use ${item.alt}`}
                           onClick={() => setBaseColourChoice(item.src)}
-                          className={`group relative aspect-square cursor-pointer overflow-hidden rounded-lg border-2 border-transparent p-0 shadow-[0_1px_8px_rgba(0,0,0,0.08)] outline-none transition-[transform,box-shadow,ring] xs:rounded-xl focus-visible:ring-2 focus-visible:ring-[hsl(330,100%,70%)] focus-visible:ring-offset-2 ${
+                          className={`group relative aspect-square w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border-2 border-transparent p-0 shadow-[0_1px_8px_rgba(0,0,0,0.08)] outline-none transition-[transform,box-shadow,ring] xs:rounded-xl focus-visible:ring-2 focus-visible:ring-[hsl(330,100%,70%)] focus-visible:ring-offset-2 ${
                             selected
                               ? "z-[1] ring-2 ring-[hsl(330,100%,78%)] ring-offset-2 ring-offset-[hsl(0,0%,100%)] shadow-[0_8px_24px_-8px_rgba(0,0,0,0.18)]"
                               : "hover:z-[1] hover:-translate-y-0.5 hover:shadow-[0_10px_28px_-12px_rgba(0,0,0,0.2)] hover:ring-1 hover:ring-[hsl(0,0%,78%)]"
@@ -336,160 +423,138 @@ const CreateDesignStep3 = () => {
               </div>
             </div>
 
-            {/* Right Column - Concept Cards */}
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-4">
-                {error && concepts.length === 0 ? (
-                  <div className="w-full md:max-w-[440px] border border-[hsl(0,0%,85%)] bg-[hsl(0,0%,97%)] rounded-2xl p-5">
-                    <div className="text-sm text-[hsl(0,0%,40%)]">{error}</div>
-                    <button
-                      type="button"
-                      onClick={() => void generateConcepts({ force: true })}
-                      className="mt-3 inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-medium bg-[hsl(0,0%,10%)] text-white hover:bg-[hsl(0,0%,20%)] transition-colors border-none"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : null}
+            {/* Right Column — concept composer (Step 3ii-style) + AI suggestions */}
+            <div className="flex min-w-0 w-full max-w-full flex-col gap-4">
+              <h2 className="text-base font-bold text-[hsl(0,0%,10%)] md:text-lg lg:text-xl">Create Background Concept</h2>
+              <p className="max-w-full text-sm text-[hsl(0,0%,55%)]">
+                Prompt it, edit it, attach one reference image, and shape the background exactly how you imagine it
+              </p>
 
-                {error && concepts.length > 0 ? (
-                  <div className="w-full md:max-w-[440px] -mt-1 text-xs text-[hsl(0,0%,45%)] flex items-center justify-between">
-                    <span>{error}</span>
-                    <button
-                      type="button"
-                      onClick={() => void generateConcepts({ force: true })}
-                      className="ml-3 px-3 py-1.5 rounded-full bg-[hsl(0,0%,10%)] text-white hover:bg-[hsl(0,0%,20%)] transition-colors border-none"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : null}
+              {lockConceptActions ? (
+                <p className="text-xs text-[hsl(330,100%,38%)]">Select a base colour on the left to continue.</p>
+              ) : null}
 
-                {showIntroLayout ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={!theme || lockConceptActions}
-                      onClick={() => void generateConcepts()}
-                      className={`group flex w-full max-w-full flex-col text-left border rounded-2xl p-5 transition-all duration-200 ease-out md:max-w-[440px] ${
-                        !theme || lockConceptActions
-                          ? "cursor-not-allowed border-[hsl(0,0%,85%)] bg-[hsl(0,0%,92%)] opacity-70"
-                          : "cursor-pointer border-[hsl(0,0%,85%)] bg-[hsl(0,0%,95%)] hover:border-[hsl(0,0%,68%)] hover:bg-[hsl(0,0%,97%)] hover:shadow-[0_12px_40px_-16px_rgba(0,0,0,0.1)] hover:-translate-y-px active:translate-y-0 active:shadow-[0_4px_16px_-12px_rgba(0,0,0,0.06)]"
-                      }`}
-                    >
-                      <span className="mb-8 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full bg-white px-3 py-1.5 text-sm font-medium text-[hsl(0,0%,10%)] shadow-sm ring-1 ring-transparent transition-[box-shadow,ring-color,transform] duration-200 group-hover:shadow-md group-hover:ring-[hsl(0,0%,88%)]">
-                        Suggest concept
-                      </span>
-                      <p className="text-sm text-[hsl(0,0%,40%)]">
-                        Click to get suggestions based on your event details.
-                      </p>
-                    </button>
-
-                    <div
-                      role="presentation"
-                      aria-disabled={lockConceptActions}
-                      onClick={() => {
-                        if (lockConceptActions) return;
-                        setSelectedConceptId(CUSTOM_CONCEPT_ID);
-                      }}
-                      className={`w-full md:max-w-[440px] text-left border rounded-2xl p-4 transition-all duration-150 ease-out flex flex-col ${
-                        lockConceptActions
-                          ? "pointer-events-none cursor-not-allowed opacity-55 border-[hsl(0,0%,88%)] bg-[hsl(0,0%,96%)]"
-                          : selected === CUSTOM_CONCEPT_ID
-                            ? "cursor-pointer border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)]"
-                            : "cursor-pointer bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,70%)]"
-                      }`}
-                    >
-                      <span
-                        className={`mb-3 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full px-3 py-1.5 text-sm font-medium ${
-                          selected === CUSTOM_CONCEPT_ID
-                            ? "bg-[hsl(330,100%,93%)] text-[hsl(0,0%,10%)]"
-                            : "bg-white text-[hsl(0,0%,10%)]"
-                        }`}
-                      >
-                        Custom
-                      </span>
-                      <textarea
-                        value={customConceptText}
-                        disabled={lockConceptActions}
-                        onChange={(e) => {
-                          setCustomConceptText(e.target.value);
-                          setSelectedConceptId(CUSTOM_CONCEPT_ID);
-                        }}
-                        onFocus={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
-                        onClick={(e) => e.stopPropagation()}
-                        placeholder="Input your own concept..."
-                        rows={4}
-                        className="w-full h-[50px] bg-transparent text-sm text-[hsl(0,0%,40%)] placeholder:text-[hsl(0,0%,65%)] outline-none cursor-text disabled:cursor-not-allowed"
+              <div className="flex min-h-[min(220px,40vh)] w-full min-w-0 max-w-full flex-col rounded-2xl border border-[hsl(0,0%,92%)] bg-[hsl(0,0%,97%)] p-3 sm:p-4">
+                <input
+                  ref={conceptInsertInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleConceptInsertPick(e.target.files)}
+                />
+                <div className="flex min-h-0 flex-1 flex-col gap-2">
+                  {conceptInsertPreviewUrl ? (
+                    <div className="relative inline-flex shrink-0 self-start">
+                      <img
+                        src={conceptInsertPreviewUrl}
+                        alt=""
+                        className="h-14 w-14 rounded-lg border border-[hsl(0,0%,88%)] object-cover"
                       />
-                    </div>
-                  </>
-                ) : !isAnalyzing ? (
-                  <>
-                    {concepts.map((concept) => (
                       <button
-                        key={concept.id}
                         type="button"
-                        onClick={() => setSelectedConceptId(concept.id)}
-                        className={`group flex w-full max-w-full flex-col text-left border rounded-2xl p-5 cursor-pointer transition-all duration-200 ease-out md:max-w-[440px] ${
-                          selected === concept.id
-                            ? "border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)] hover:border-[hsl(330,100%,78%)] hover:shadow-[0_12px_36px_-16px_rgba(0,0,0,0.09)] hover:-translate-y-px active:translate-y-0 active:shadow-[0_0_0_1px_hsl(330,100%,85%)]"
-                            : "bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,68%)] hover:bg-[hsl(0,0%,97%)] hover:shadow-[0_12px_40px_-16px_rgba(0,0,0,0.1)] hover:-translate-y-px active:translate-y-0 active:shadow-[0_4px_16px_-12px_rgba(0,0,0,0.06)]"
-                        }`}
+                        onClick={handleClearConceptInsert}
+                        disabled={lockConceptActions || isAnalyzing}
+                        className="absolute -right-0.5 -top-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border-none bg-[hsl(15,100%,55%)] disabled:opacity-50"
+                        aria-label="Remove image"
                       >
-                        <span
-                          className={`mb-4 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full px-3 py-1.5 text-sm font-medium shadow-sm ring-1 ring-transparent transition-[box-shadow,ring-color] duration-200 group-hover:shadow-md ${
-                            selected === concept.id
-                              ? "bg-[hsl(330,100%,93%)] text-[hsl(0,0%,10%)] group-hover:ring-[hsl(330,100%,82%)]"
-                              : "bg-white text-[hsl(0,0%,10%)] group-hover:ring-[hsl(0,0%,88%)]"
-                          }`}
-                        >
-                          {concept.label}
-                        </span>
-                        <p className="text-sm text-[hsl(0,0%,40%)]">{concept.description}</p>
+                        <img src="/Halorai Dev/Icons/cancel.svg" alt="" className="h-2 w-2 brightness-0 invert" />
                       </button>
-                    ))}
-
-                    <div
-                      role="presentation"
-                      onClick={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
-                      className={`flex w-full max-w-full flex-col text-left border rounded-2xl p-4 cursor-pointer transition-all duration-150 ease-out md:max-w-[440px] ${
-                        selected === CUSTOM_CONCEPT_ID
-                          ? "border-[hsl(330,100%,85%)] shadow-[0_0_0_1px_hsl(330,100%,85%)] bg-[hsl(0,0%,100%)]"
-                          : "bg-[hsl(0,0%,95%)] border-[hsl(0,0%,85%)] hover:border-[hsl(0,0%,70%)]"
+                    </div>
+                  ) : null}
+                  <textarea
+                    value={customConceptText}
+                    disabled={lockConceptActions || isAnalyzing}
+                    onChange={(e) => handleConceptInputChange(e.target.value)}
+                    onFocus={() => {
+                      if (!lockConceptActions) setSelectedConceptId(CUSTOM_CONCEPT_ID);
+                    }}
+                    placeholder="e.g A wall of fire... add fire sparks, flames"
+                    className="min-h-[120px] w-full flex-1 resize-none border-none bg-transparent text-sm text-[hsl(0,0%,10%)] outline-none placeholder:text-[hsl(0,0%,55%)] disabled:cursor-not-allowed disabled:opacity-70"
+                  />
+                </div>
+                <div className="mt-2 flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3">
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={suggestConceptDisabled}
+                      onClick={() => void generateConcepts()}
+                      aria-label={`Suggest concept (${suggestCount} of ${MAX_SUGGEST_PER_THEME} used for this theme)`}
+                      className={`shrink-0 border-none bg-transparent p-0 transition-opacity ${
+                        suggestConceptDisabled
+                          ? "cursor-not-allowed opacity-50"
+                          : "cursor-pointer hover:opacity-80"
                       }`}
                     >
-                      <span
-                        className={`mb-3 inline-block w-fit max-w-[min(100%,240px)] shrink-0 self-start rounded-full px-3 py-1.5 text-sm font-medium ${
-                          selected === CUSTOM_CONCEPT_ID
-                            ? "bg-[hsl(330,100%,93%)] text-[hsl(0,0%,10%)]"
-                            : "bg-white text-[hsl(0,0%,10%)]"
-                        }`}
-                      >
-                        Custom
-                      </span>
-                      <textarea
-                        value={customConceptText}
-                        onChange={(e) => {
-                          setCustomConceptText(e.target.value);
-                          setSelectedConceptId(CUSTOM_CONCEPT_ID);
-                        }}
-                        onFocus={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
-                        onClick={(e) => e.stopPropagation()}
-                        placeholder="Input your own concept..."
-                        rows={4}
-                        className="w-full h-[60px] bg-transparent text-sm text-[hsl(0,0%,40%)] placeholder:text-[hsl(0,0%,65%)] outline-none cursor-text"
+                      <img
+                        src="/Halorai Dev/Icons/suggest concept.png"
+                        alt=""
+                        className="h-9 w-auto object-contain sm:h-10"
                       />
-                    </div>
-                  </>
-                ) : null}
+                    </button>
+                    <span
+                      className={`text-[11px] font-medium tabular-nums sm:text-xs ${
+                        atSuggestLimit ? "text-[hsl(330,100%,42%)]" : "text-[hsl(0,0%,50%)]"
+                      }`}
+                      aria-live="polite"
+                    >
+                      {suggestCount}/{MAX_SUGGEST_PER_THEME}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    title={
+                      hasAttachedReference
+                        ? "Remove the image above to attach a different one"
+                        : "Attach one reference image for the AI"
+                    }
+                    disabled={lockConceptActions || isAnalyzing || hasAttachedReference}
+                    onClick={() => conceptInsertInputRef.current?.click()}
+                    className="cursor-pointer rounded-full border-none bg-white p-2 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path
+                        d="M21.44 11.05L12.25 20.24C11.1242 21.3658 9.59723 21.9983 8.005 21.9983C6.41277 21.9983 4.88583 21.3658 3.76 20.24C2.63417 19.1142 2.00166 17.5872 2.00166 15.995C2.00166 14.4028 2.63417 12.8758 3.76 11.75L12.33 3.18C13.0806 2.42975 14.0938 2.00916 15.15 2.00916C16.2062 2.00916 17.2194 2.42975 17.97 3.18C18.7202 3.93063 19.1408 4.94382 19.1408 6C19.1408 7.05618 18.7202 8.06937 17.97 8.82L9.37 17.42C8.99469 17.7953 8.48809 18.0056 7.96 18.0056C7.43191 18.0056 6.92531 17.7953 6.55 17.42C6.17469 17.0447 5.96438 16.5381 5.96438 16.01C5.96438 15.4819 6.17469 14.9753 6.55 14.6L15.07 6.1"
+                        stroke="hsl(0,0%,20%)"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    title="Continue with this concept"
+                    disabled={lockConceptActions || isAnalyzing || !hasCustomConcept}
+                    onClick={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
+                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-black transition-colors hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <img src="/Halorai Dev/Icons/send Vector.svg" alt="Continue" className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3">
+              {error ? (
+                <div className="flex w-full min-w-0 max-w-full flex-col gap-2 text-sm text-[hsl(0,0%,40%)]">
+                  <span>{error}</span>
+                  <button
+                    type="button"
+                    onClick={() => void generateConcepts()}
+                    disabled={suggestConceptDisabled}
+                    className="w-fit rounded-full border-none bg-[hsl(0,0%,10%)] px-4 py-2 text-xs font-medium text-white hover:bg-[hsl(0,0%,20%)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Retry suggestions
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Third column — navigation fixed to bottom of card */}
+            <div className="flex w-full min-w-0 max-w-full flex-col justify-end md:min-h-full">
+              <div className="flex flex-wrap items-center justify-end gap-2 max-md:pt-2 sm:gap-3">
                 <button
                   type="button"
                   onClick={() => navigate("/create-design/step-2")}
-                  className="flex items-center gap-2 bg-[hsl(0,0%,95%)] text-[hsl(0,0%,10%)] rounded-full px-4 py-3 text-xs font-medium cursor-pointer transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99]"
+                  className="flex min-w-0 shrink items-center gap-1.5 rounded-full bg-[hsl(0,0%,95%)] px-3 py-2.5 text-[11px] font-medium text-[hsl(0,0%,10%)] transition-all duration-150 ease-out hover:scale-[1.01] hover:opacity-90 active:scale-[0.99] sm:gap-2 sm:px-4 sm:py-3 sm:text-xs cursor-pointer"
                 >
                   <img
                     src="/Halorai Dev/Icons/weui_arrow-outlined.svg"
@@ -502,10 +567,10 @@ const CreateDesignStep3 = () => {
                   type="button"
                   onClick={() => navigate("/create-design/step-3ii")}
                   disabled={isAnalyzing || !canContinue}
-                  className={`flex items-center gap-2 border-none rounded-full px-4 py-3 text-xs font-medium transition-all duration-150 ease-out hover:opacity-90 hover:scale-[1.01] active:scale-[0.99] ${
+                  className={`flex min-w-0 shrink items-center gap-1.5 rounded-full border-none px-3 py-2.5 text-[11px] font-medium transition-all duration-150 ease-out hover:scale-[1.01] hover:opacity-90 active:scale-[0.99] sm:gap-2 sm:px-4 sm:py-3 sm:text-xs ${
                     isAnalyzing || !canContinue
-                      ? "bg-[hsl(0,0%,60%)] text-white cursor-not-allowed"
-                      : "bg-[hsl(0,0%,10%)] text-white cursor-pointer hover:bg-[hsl(0,0%,20%)]"
+                      ? "cursor-not-allowed bg-[hsl(0,0%,60%)] text-white"
+                      : "cursor-pointer bg-[hsl(0,0%,10%)] text-white hover:bg-[hsl(0,0%,20%)]"
                   }`}
                 >
                   Continue
