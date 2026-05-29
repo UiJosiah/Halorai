@@ -622,27 +622,27 @@ const CreateDesignStep3ii = () => {
                       }`}
                     >
                       <div className="w-[min(100%,11.25rem)] max-w-full">
-                      <ArcLoader
+                <ArcLoader
                         fluid
-                        size={180}
-                        label={
+                  size={180}
+                  label={
                           !assetsHydrated ? (
                             "Loading..."
                           ) : (
-                            <span>
+                    <span>
                               Creating
-                              <br />
+                      <br />
                               your background...
-                            </span>
+                    </span>
                           )
-                        }
+                  }
                         spinning={!assetsHydrated || isGenerating || isBlending}
-                        spinDurationMs={2600}
-                      />
+                  spinDurationMs={2600}
+                />
                       </div>
                     </div>
                   ) : null}
-                </div>
+              </div>
 
                 <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-[2] flex justify-end sm:bottom-3 sm:left-3 sm:right-3">
                   <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-2xl bg-white/40 px-1.5 py-1.5 shadow-lg backdrop-blur-xl sm:gap-2 sm:px-2 sm:py-2">
@@ -677,13 +677,13 @@ const CreateDesignStep3ii = () => {
                       onClick={handleHistoryForward}
                       className="cursor-pointer border-none bg-transparent p-1 transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <img
-                        src="/Halorai Dev/Icons/grommet-icons_revert.svg"
+                  <img
+                    src="/Halorai Dev/Icons/grommet-icons_revert.svg"
                         alt=""
                         className="h-5 w-5 scale-x-[-1] sm:h-7 sm:w-7"
                         aria-hidden
-                      />
-                    </button>
+                  />
+                </button>
                     <div className="relative">
                       <button
                         type="button"
@@ -692,12 +692,12 @@ const CreateDesignStep3ii = () => {
                         onClick={() => setIsDownloadOpen((v) => !v)}
                         className="cursor-pointer border-none bg-transparent transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        <img
-                          src="/Halorai Dev/Icons/material-symbols-light_download.svg"
+                  <img
+                    src="/Halorai Dev/Icons/material-symbols-light_download.svg"
                           alt={isDownloading ? "Preparing" : "Download"}
                           className="h-8 w-8 sm:h-10 sm:w-10 md:h-12 md:w-12"
-                        />
-                      </button>
+                  />
+                </button>
 
                       {isDownloadOpen && backgroundPreviewImage ? (
                         <div className="absolute right-0 z-20 mt-2 min-w-[11rem] rounded-2xl border border-[hsl(0,0%,90%)] bg-white p-2 shadow-lg">
@@ -832,11 +832,11 @@ const CreateDesignStep3ii = () => {
                       </button>
                     </div>
                   ) : null}
-                  <textarea
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
+                <textarea
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
                     disabled={atGenerationLimit}
-                    placeholder="e.g A wall of fire... add fire sparks, flames"
+                  placeholder="e.g A wall of fire... add fire sparks, flames"
                     className="min-h-[120px] w-full flex-1 resize-none border-none bg-transparent text-sm text-[hsl(0,0%,10%)] outline-none placeholder:text-[hsl(0,0%,55%)] disabled:cursor-not-allowed disabled:opacity-70"
                   />
                 </div>
@@ -877,8 +877,8 @@ const CreateDesignStep3ii = () => {
                     <img src="/Halorai Dev/Icons/send Vector.svg" alt="Send" className="h-4 w-4" />
                   </button>
                 </div>
+                </div>
               </div>
-            </div>
 
             {/* Third column — navigation fixed to bottom of card */}
             <div className="flex w-full min-w-0 max-w-full flex-col justify-end md:min-h-full max-md:max-w-full">

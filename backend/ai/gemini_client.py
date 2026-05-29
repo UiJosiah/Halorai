@@ -137,36 +137,75 @@ def inpaint_flyer_with_mask_base64(
   prompt: str,
   model: str,
   *,
+  region_masks: Optional[Sequence[bytes]] = None,
+  reference_images: Optional[Sequence[tuple[bytes, str]]] = None,
   aspect_ratio: Optional[str] = "4:5",
   number_of_images: int = 1,
 ) -> List[Dict[str, Any]]:
   """
-  Mask-guided edit using Gemini image output: reference 1 = flyer, reference 2 = mask
-  (white = allowed edit region, black = must stay unchanged). Not true API inpainting;
-  instructs the model to respect the mask semantics.
+  Mask-guided edit: reference 1 = flyer, reference 2 = combined mask.
+  Optional refs 3..N = one mask per numbered edit. Further refs = user attachments.
   """
   if not prompt or not str(prompt).strip():
     raise ValueError("prompt is required")
   img_b64 = base64.b64encode(image_png_bytes).decode("ascii")
   mask_b64 = base64.b64encode(mask_png_bytes).decode("ascii")
 
+  refs: List[ReferenceImage] = [
+    {"mimeType": "image/png", "base64": img_b64},
+    {"mimeType": "image/png", "base64": mask_b64},
+  ]
+  ref_lines: List[str] = [
+    "- REFERENCE IMAGE 1: the current flyer. Preserve every pixel outside the edit regions.",
+    "- REFERENCE IMAGE 2: COMBINED MASK (separate image — NOT the flyer). "
+    "WHITE = any editable zone (union of all edits). BLACK = must stay unchanged.",
+  ]
+
+  per_edit_masks = [m for m in (region_masks or []) if m]
+  for i, rm in enumerate(per_edit_masks):
+    idx = 3 + i
+    refs.append({"mimeType": "image/png", "base64": base64.b64encode(rm).decode("ascii")})
+    ref_lines.extend(
+      [
+        "",
+        f"- REFERENCE IMAGE #{idx}: EDIT {i + 1} MASK ONLY (separate mask image).",
+        f"  Apply Edit {i + 1} ONLY where this image is WHITE. Where BLACK, ignore Edit {i + 1}.",
+      ]
+    )
+
+  user_refs = [(data, mime) for data, mime in (reference_images or []) if data]
+  attach_start = 3 + len(per_edit_masks)
+  for j, (ref_bytes, ref_mime) in enumerate(user_refs):
+    idx = attach_start + j
+    ref_b64 = base64.b64encode(ref_bytes).decode("ascii")
+    refs.append({"mimeType": (ref_mime or "image/png").strip(), "base64": ref_b64})
+    ref_lines.extend(
+      [
+        "",
+        f"- REFERENCE IMAGE #{idx}: USER ATTACHMENT — use as described in the edit that references #{idx}.",
+      ]
+    )
+
+  if not per_edit_masks and not user_refs:
+    ref_lines[1] = (
+      "- REFERENCE IMAGE 2: a mask (separate from the flyer — NOT a photo). "
+      "WHITE = editable zone. BLACK = must stay identical to reference 1."
+    )
+
   full_prompt = (
-    "You are editing a finished event flyer image.\n"
-    "- REFERENCE IMAGE 1: the current flyer. Preserve every pixel outside the edit region.\n"
-    "- REFERENCE IMAGE 2: a mask. WHITE pixels mark where you MAY change pixels to satisfy the request. "
-    "BLACK (and near-black) pixels MUST stay visually identical to reference 1 — same text, faces, logos, layout, and colors in those areas.\n\n"
-    "USER REQUEST (apply only in white mask areas; keep everything else matching reference 1):\n"
+    "You are editing a finished event flyer image"
+    + (" in ONE pass." if per_edit_masks else ".")
+    + "\n\nREFERENCE IMAGES:\n"
+    + "\n".join(ref_lines)
+    + "\n\nUSER REQUEST:\n"
     + str(prompt).strip()
-    + "\n\nOutput exactly ONE edited flyer image with the same aspect ratio and framing as reference 1."
+    + "\n\nOutput exactly ONE edited flyer with the same aspect ratio and framing as reference 1."
   )
 
   return recreate_image_base64(
     full_prompt,
     model,
-    reference_images=[
-      {"mimeType": "image/png", "base64": img_b64},
-      {"mimeType": "image/png", "base64": mask_b64},
-    ],
+    reference_images=refs,
     aspect_ratio=aspect_ratio,
     number_of_images=number_of_images,
   )

@@ -7,6 +7,7 @@ import re
 from flask import Blueprint, jsonify, request, g
 
 from .ai_client import (
+  edit_flyer_base64,
   generate_flyer_image_base64,
   generate_images_base64,
   generate_text,
@@ -792,8 +793,10 @@ def ai_flyer_inpaint():
   Masked local edit of the generated flyer (Step 5).
   multipart/form-data:
     - image: final flyer image (PNG/JPEG/WebP)
-    - mask: PNG same aspect as image; **white = edit**, **black = preserve**
-    - prompt: what to change inside the white regions only
+    - mask: PNG combined mask; **white = edit**, **black = preserve**
+    - regionMasks: optional (2–3) — one mask per numbered edit (same order as prompts)
+    - prompt: edit instructions (combined for batch edits)
+    - referenceImages: optional — user attachments (flattened, all regions)
     - model: optional (defaults to AI_IMAGE_MODEL / same as other image routes; OpenAI vs Gemini from AI_PROVIDER)
   """
   prompt = (request.form.get("prompt") or "").strip()
@@ -816,12 +819,32 @@ def ai_flyer_inpaint():
   if not mask_bytes:
     return _json_error("mask file is empty", 400)
 
+  reference_images: list[tuple[bytes, str]] = []
+  for ref_f in request.files.getlist("referenceImages"):
+    if not getattr(ref_f, "filename", None):
+      continue
+    ref_bytes = ref_f.read() or b""
+    if ref_bytes:
+      reference_images.append((ref_bytes, _guess_mime(ref_f.filename) or "image/png"))
+  if len(reference_images) > 6:
+    return _json_error("At most 6 referenceImages are allowed.", 400)
+
+  region_masks: list[bytes] = []
+  for rm_f in request.files.getlist("regionMasks"):
+    if not getattr(rm_f, "filename", None):
+      continue
+    rm_bytes = rm_f.read() or b""
+    if rm_bytes:
+      region_masks.append(rm_bytes)
+  if len(region_masks) > 3:
+    return _json_error("At most 3 regionMasks are allowed.", 400)
+
   model = (request.form.get("model") or "").strip() or DEFAULT_IMAGE_MODEL
 
   t0 = time.perf_counter()
   try:
     print(
-      f"[AI][{_rid()}] /api/ai/flyer/inpaint -> model={model!r} promptChars={len(prompt)} imageBytes={len(image_bytes)} maskBytes={len(mask_bytes)}",
+      f"[AI][{_rid()}] /api/ai/flyer/inpaint -> model={model!r} promptChars={len(prompt)} imageBytes={len(image_bytes)} maskBytes={len(mask_bytes)} regionMaskCount={len(region_masks)} refCount={len(reference_images)}",
       flush=True,
     )
   except Exception:
@@ -833,6 +856,8 @@ def ai_flyer_inpaint():
       mask_bytes,
       prompt,
       model,
+      region_masks=region_masks or None,
+      reference_images=reference_images or None,
       aspect_ratio="4:5",
       number_of_images=1,
     )
@@ -863,6 +888,97 @@ def ai_flyer_inpaint():
     try:
       print(
         f"[AI][{_rid()}] /api/ai/flyer/inpaint <- ok {t_ms}ms mimeType={first.get('mimeType')} base64Len={len(b64)}",
+        flush=True,
+      )
+    except Exception:
+      pass
+
+  return jsonify({"model": model, "images": images})
+
+
+@ai_bp.post("/api/ai/flyer/edit")
+def ai_flyer_edit():
+  """
+  Full-flyer edit from Step 5 sidebar (no template / no Step 3ii background).
+  multipart/form-data:
+    - flyerImage: required — the current generated flyer
+    - message: required — edit instructions
+    - referenceImages: optional (0–2) — user attachments from the + button
+    - model: optional
+  """
+  message = (request.form.get("message") or "").strip()
+  if not message:
+    return _json_error("message is required", 400)
+  if len(message) > 4000:
+    return _json_error("message is too long (max 4000 characters)", 400)
+
+  flyer_f = request.files.get("flyerImage")
+  if not flyer_f or not getattr(flyer_f, "filename", None):
+    return _json_error("flyerImage is required (the current flyer to edit)", 400)
+
+  flyer_bytes = flyer_f.read() or b""
+  if not flyer_bytes:
+    return _json_error("flyerImage is empty", 400)
+  flyer_mime = _guess_mime(getattr(flyer_f, "filename", "") or "") or "image/png"
+
+  reference_images: list[tuple[bytes, str]] = []
+  for ref_f in request.files.getlist("referenceImages"):
+    if not getattr(ref_f, "filename", None):
+      continue
+    ref_bytes = ref_f.read() or b""
+    if ref_bytes:
+      reference_images.append((ref_bytes, _guess_mime(ref_f.filename) or "image/png"))
+  if len(reference_images) > 2:
+    return _json_error("At most 2 referenceImages are allowed.", 400)
+
+  model = (request.form.get("model") or "").strip() or DEFAULT_FLYER_MODEL
+
+  t0 = time.perf_counter()
+  try:
+    print(
+      f"[AI][{_rid()}] /api/ai/flyer/edit -> model={model!r} messageChars={len(message)} flyerBytes={len(flyer_bytes)} refCount={len(reference_images)}",
+      flush=True,
+    )
+  except Exception:
+    pass
+
+  try:
+    images = edit_flyer_base64(
+      flyer_bytes,
+      flyer_mime,
+      message,
+      model,
+      reference_images=reference_images or None,
+      aspect_ratio="4:5",
+      number_of_images=1,
+    )
+  except ValueError as e:
+    return _json_error(str(e), 400)
+  except RuntimeError as e:
+    return _json_error(str(e) or "Flyer edit is not available.", 503)
+  except Exception as e:
+    status, msg = _ai_exception_to_http(e)
+    ai_logger.exception(
+      json.dumps(
+        {
+          "type": "ai_error",
+          "endpoint": "/api/ai/flyer/edit",
+          "requestId": getattr(g, "request_id", None),
+          "model": model,
+          "error": str(e),
+        },
+        ensure_ascii=False,
+      )
+    )
+    return _json_error(msg, status)
+
+  t_ms = int((time.perf_counter() - t0) * 1000)
+  first = images[0] if images else None
+  if first:
+    b64 = first.get("base64") or ""
+    try:
+      print(
+        f"[AI][{_rid()}] /api/ai/flyer/edit <- ok {t_ms}ms mimeType={first.get('mimeType')} base64Len={len(b64)}",
         flush=True,
       )
     except Exception:

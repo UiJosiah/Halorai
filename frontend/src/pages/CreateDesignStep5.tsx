@@ -3,18 +3,39 @@ import AppLayout from "@/components/AppLayout";
 import CreateDesignHero from "@/components/CreateDesignHero";
 import StepperProgress from "@/components/StepperProgress";
 import { useCreateDesign } from "@/contexts/CreateDesignContext";
-import { aiFlyerInpaint, aiGenerateFlyer } from "@/lib/api";
+import { aiFlyerEdit, aiFlyerInpaint, aiGenerateFlyer } from "@/lib/api";
 import { downloadFlyer } from "@/lib/downloadFlyer";
 import ArcLoader from "@/components/ArcLoader";
 import FlyerEditCanvas, { type PendingFlyerRegion } from "@/components/FlyerEditCanvas";
 import FlyerEditPanel, {
-  FLYER_EDIT_COST_PER_REGION,
   FLYER_EDIT_MAX_REGIONS,
   type FlyerEditRegion,
 } from "@/components/FlyerEditPanel";
-import { FLYER_SKETCH_DEFAULT_COLOR } from "@/lib/flyerEditGeometry";
-import { flyerImageToPngBlob } from "@/lib/flyerEditGeometry";
+import { FLYER_SKETCH_DEFAULT_COLOR, buildBatchRegionPrompt, flyerImageToPngBlob, mergeMaskBlobs } from "@/lib/flyerEditGeometry";
+import { createAttachedImages, revokeAttachedImages, type AttachedImage } from "@/lib/imageAttach";
 import type { FlyerImage } from "@/contexts/CreateDesignContext";
+
+type FlyerHistEntry = { image: FlyerImage; key: string };
+type FlyerHistState = { entries: FlyerHistEntry[]; index: number };
+
+function buildNextFlyerHist(
+  h: FlyerHistState,
+  image: FlyerImage,
+  key: string
+): { next: FlyerHistState; changed: boolean } {
+  if (h.entries.length === 0) {
+    return { next: { entries: [{ image, key }], index: 0 }, changed: true };
+  }
+  const tip = Math.max(0, h.entries.length - 1);
+  const end = Math.max(h.index, tip);
+  const truncated = h.entries.slice(0, end + 1);
+  const last = truncated[truncated.length - 1];
+  if (last && last.image.base64 === image.base64 && last.key === key) {
+    return { next: h, changed: false };
+  }
+  const entries = [...truncated, { image, key }];
+  return { next: { entries, index: entries.length - 1 }, changed: true };
+}
 
 function flyerImageToFile(img: FlyerImage): File {
   const binary = atob(img.base64);
@@ -40,9 +61,10 @@ const CreateDesignStep5 = () => {
   const [regions, setRegions] = useState<FlyerEditRegion[]>([]);
   const [circleMode, setCircleMode] = useState(false);
   const [sketchColor, setSketchColor] = useState<string>(FLYER_SKETCH_DEFAULT_COLOR);
-  const [directInsertImage, setDirectInsertImage] = useState<File | null>(null);
-  const [directInsertPreviewUrl, setDirectInsertPreviewUrl] = useState<string | null>(null);
-  const directPreviewRef = useRef<string | null>(null);
+  const [directInsertItems, setDirectInsertItems] = useState<AttachedImage[]>([]);
+  const [flyerHist, setFlyerHist] = useState<FlyerHistState>({ entries: [], index: -1 });
+  const flyerHistRef = useRef(flyerHist);
+  const historyInitRef = useRef(false);
 
   const {
     assetsHydrated,
@@ -125,17 +147,42 @@ const CreateDesignStep5 = () => {
     setRegions([]);
     setCircleMode(false);
     setMessage("");
-    setDirectInsertImage(null);
-    if (directPreviewRef.current) {
-      URL.revokeObjectURL(directPreviewRef.current);
-      directPreviewRef.current = null;
-    }
-    setDirectInsertPreviewUrl(null);
+    setDirectInsertItems((prev) => {
+      revokeAttachedImages(prev);
+      return [];
+    });
   }, []);
 
   useEffect(() => {
     clearEditSession();
   }, [flyerKey, clearEditSession]);
+
+  useEffect(() => {
+    flyerHistRef.current = flyerHist;
+  }, [flyerHist]);
+
+  useEffect(() => {
+    setFlyerHist({ entries: [], index: -1 });
+    historyInitRef.current = false;
+  }, [generationKey]);
+
+  useEffect(() => {
+    if (historyInitRef.current) return;
+    if (!flyerImage?.base64?.trim() || !flyerKey.trim()) return;
+    if (flyerHist.entries.length > 0) return;
+    historyInitRef.current = true;
+    setFlyerHist({ entries: [{ image: flyerImage, key: flyerKey }], index: 0 });
+  }, [flyerImage, flyerKey, flyerHist.entries.length]);
+
+  const commitFlyerVersion = useCallback(
+    (image: FlyerImage, key: string) => {
+      setFlyerImage(image);
+      setFlyerKey(key);
+      setFlyerHist((h) => buildNextFlyerHist(h, image, key).next);
+      clearEditSession();
+    },
+    [clearEditSession, setFlyerImage, setFlyerKey]
+  );
 
   const generateFlyer = useCallback(async (opts?: { message?: string; keepExisting?: boolean; force?: boolean }) => {
     const force = !!opts?.force;
@@ -178,9 +225,7 @@ const CreateDesignStep5 = () => {
         setError("AI returned no image. Please retry.");
         return;
       }
-      setFlyerKey(generationKey);
-      setFlyerImage(first);
-      clearEditSession();
+      commitFlyerVersion(first, generationKey);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to generate flyer.";
       setError(msg);
@@ -190,7 +235,7 @@ const CreateDesignStep5 = () => {
   }, [
     backgroundPreviewImage,
     canGenerate,
-    clearEditSession,
+    commitFlyerVersion,
     conceptDescription,
     eventDetails,
     flyerImage,
@@ -204,9 +249,35 @@ const CreateDesignStep5 = () => {
 
   useEffect(() => {
     if (!canGenerate) return;
+    const h = flyerHistRef.current;
+    if (h.entries.length > 0 && h.index >= 0 && h.index < h.entries.length - 1) return;
     void generateFlyer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canGenerate, generationKey]);
+
+  const handleHistoryBack = () => {
+    const h = flyerHistRef.current;
+    if (busy || !assetsHydrated || h.entries.length <= 1 || h.index <= 0) return;
+    const ni = h.index - 1;
+    const entry = h.entries[ni];
+    setFlyerImage(entry.image);
+    setFlyerKey(entry.key);
+    setFlyerHist({ ...h, index: ni });
+    setIsDownloadOpen(false);
+    setError("");
+  };
+
+  const handleHistoryForward = () => {
+    const h = flyerHistRef.current;
+    if (busy || !assetsHydrated || h.entries.length <= 1 || h.index >= h.entries.length - 1) return;
+    const ni = h.index + 1;
+    const entry = h.entries[ni];
+    setFlyerImage(entry.image);
+    setFlyerKey(entry.key);
+    setFlyerHist({ ...h, index: ni });
+    setIsDownloadOpen(false);
+    setError("");
+  };
 
   const handleDownload = async (format: "png" | "jpg" | "pdf") => {
     if (!flyerImage) return;
@@ -222,28 +293,30 @@ const CreateDesignStep5 = () => {
   const hasRegions = regions.length > 0;
   const maxRegionsReached = regions.length >= FLYER_EDIT_MAX_REGIONS;
   const plusDisabled = hasRegions || circleMode;
-  const circleDisabled = !!directInsertImage;
+  const circleDisabled = directInsertItems.length > 0;
   const textareaDisabled = hasRegions;
-  const editCost = hasRegions ? regions.length * FLYER_EDIT_COST_PER_REGION : FLYER_EDIT_COST_PER_REGION;
   const busy = isPreparing || isApplyingEdits;
 
-  const handlePickDirectInsert = (file: File) => {
-    if (directPreviewRef.current) URL.revokeObjectURL(directPreviewRef.current);
-    const url = URL.createObjectURL(file);
-    directPreviewRef.current = url;
-    setDirectInsertPreviewUrl(url);
-    setDirectInsertImage(file);
+  const handleAddDirectInsert = (files: File[]) => {
+    if (!files.length) return;
+    setDirectInsertItems((prev) => [...prev, ...createAttachedImages(files, prev.length)]);
     setCircleMode(false);
   };
 
-  const handleClearDirectInsert = () => {
-    setDirectInsertImage(null);
-    if (directPreviewRef.current) {
-      URL.revokeObjectURL(directPreviewRef.current);
-      directPreviewRef.current = null;
-    }
-    setDirectInsertPreviewUrl(null);
+  const handleRemoveDirectInsert = (id: string) => {
+    setDirectInsertItems((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((item) => item.id !== id);
+    });
   };
+
+  const clearDirectInsert = useCallback(() => {
+    setDirectInsertItems((prev) => {
+      revokeAttachedImages(prev);
+      return [];
+    });
+  }, []);
 
   const handleAddRegion = (pending: PendingFlyerRegion) => {
     if (regions.length >= FLYER_EDIT_MAX_REGIONS) return;
@@ -254,11 +327,11 @@ const CreateDesignStep5 = () => {
         previewUrl: pending.previewUrl,
         maskBlob: pending.maskBlob,
         prompt: pending.prompt,
-        referenceImage: pending.referenceImage,
+        referenceImages: pending.referenceImages,
       },
     ]);
     setCircleMode(false);
-    handleClearDirectInsert();
+    clearDirectInsert();
   };
 
   const handleRemoveRegion = (id: string) => {
@@ -270,25 +343,61 @@ const CreateDesignStep5 = () => {
     setError("");
     setIsApplyingEdits(true);
     try {
-      let current: FlyerImage = flyerImage;
-      for (const region of regions) {
-        const imageBlob = await flyerImageToPngBlob(current);
-        const res = await aiFlyerInpaint({
-          image: imageBlob,
-          mask: region.maskBlob,
-          prompt: region.prompt,
-        });
-        const next = res.images?.[0];
-        if (!next?.base64) {
-          setError("AI returned no image for a region edit. Please retry.");
-          return;
-        }
-        current = next;
+      const imageBlob = await flyerImageToPngBlob(flyerImage);
+      const mergedMask = await mergeMaskBlobs(regions.map((r) => r.maskBlob));
+      if (!mergedMask) {
+        setError("Could not build edit mask. Please retry.");
+        return;
       }
-      setFlyerImage(current);
-      clearEditSession();
+
+      const { prompt, referenceImages } = buildBatchRegionPrompt(
+        regions.map((r) => ({ prompt: r.prompt, referenceImages: r.referenceImages }))
+      );
+
+      const res = await aiFlyerInpaint({
+        image: imageBlob,
+        mask: mergedMask,
+        prompt,
+        regionMasks: regions.length > 1 ? regions.map((r) => r.maskBlob) : undefined,
+        referenceImages: referenceImages.length ? referenceImages : undefined,
+      });
+
+      const next = res.images?.[0];
+      if (!next?.base64) {
+        setError("AI returned no image for region edits. Please retry.");
+        return;
+      }
+      commitFlyerVersion(next, `${generationKey}#edit-${Date.now()}`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to apply region edits.";
+      setError(msg);
+    } finally {
+      setIsApplyingEdits(false);
+    }
+  };
+
+  const handleSidebarEdit = async () => {
+    if (!flyerImage) return;
+    const trimmed = message.trim();
+    if (!trimmed) return;
+
+    setError("");
+    setIsApplyingEdits(true);
+    try {
+      const flyerBlob = await flyerImageToPngBlob(flyerImage);
+      const res = await aiFlyerEdit({
+        flyerImage: flyerBlob,
+        message: trimmed,
+        referenceImages: directInsertItems.map((item) => item.file),
+      });
+      const next = res.images?.[0];
+      if (!next?.base64) {
+        setError("AI returned no image. Please retry.");
+        return;
+      }
+      commitFlyerVersion(next, `${generationKey}#edit-${Date.now()}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to apply flyer edit.";
       setError(msg);
     } finally {
       setIsApplyingEdits(false);
@@ -303,16 +412,7 @@ const CreateDesignStep5 = () => {
       return;
     }
 
-    const trimmed = message.trim();
-    if (!trimmed) return;
-
-    setError("");
-    setIsApplyingEdits(true);
-    try {
-      await generateFlyer({ message: trimmed, keepExisting: true, force: true });
-    } finally {
-      setIsApplyingEdits(false);
-    }
+    await handleSidebarEdit();
   };
 
   const sendDisabled = useMemo(() => {
@@ -395,7 +495,50 @@ const CreateDesignStep5 = () => {
                   )}
                 </div>
 
-                <div className="mt-4 flex w-full justify-end">
+                <div className="mt-4 flex w-full items-center justify-between gap-3">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-label="Previous flyer version"
+                      title="Previous version (no new AI call)"
+                      disabled={
+                        busy ||
+                        !assetsHydrated ||
+                        flyerHist.entries.length <= 1 ||
+                        flyerHist.index <= 0
+                      }
+                      onClick={handleHistoryBack}
+                      className="cursor-pointer rounded-full border-none bg-[hsl(0,0%,94%)] p-2 transition-opacity hover:bg-[hsl(0,0%,90%)] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <img
+                        src="/Halorai Dev/Icons/grommet-icons_revert.svg"
+                        alt=""
+                        className="h-5 w-5"
+                        aria-hidden
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Next flyer version"
+                      title="Next version (no new AI call)"
+                      disabled={
+                        busy ||
+                        !assetsHydrated ||
+                        flyerHist.entries.length <= 1 ||
+                        flyerHist.index >= flyerHist.entries.length - 1
+                      }
+                      onClick={handleHistoryForward}
+                      className="cursor-pointer rounded-full border-none bg-[hsl(0,0%,94%)] p-2 transition-opacity hover:bg-[hsl(0,0%,90%)] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <img
+                        src="/Halorai Dev/Icons/grommet-icons_revert.svg"
+                        alt=""
+                        className="h-5 w-5 scale-x-[-1]"
+                        aria-hidden
+                      />
+                    </button>
+                  </div>
+
                   <div className="relative inline-flex">
                     {isDownloadOpen && flyerImage ? (
                       <div
@@ -462,10 +605,9 @@ const CreateDesignStep5 = () => {
                 message={message}
                 onMessageChange={setMessage}
                 textareaDisabled={textareaDisabled}
-                directInsertImage={directInsertImage}
-                directInsertPreviewUrl={directInsertPreviewUrl}
-                onPickDirectInsert={handlePickDirectInsert}
-                onClearDirectInsert={handleClearDirectInsert}
+                directInsertItems={directInsertItems}
+                onAddDirectInsert={handleAddDirectInsert}
+                onRemoveDirectInsert={handleRemoveDirectInsert}
                 plusDisabled={plusDisabled}
                 circleMode={circleMode}
                 onCircleModeToggle={() => setCircleMode((v) => !v)}
@@ -474,7 +616,6 @@ const CreateDesignStep5 = () => {
                 onSend={() => void handleSend()}
                 sendDisabled={sendDisabled}
                 isApplying={isApplyingEdits}
-                editCost={editCost}
                 sketchColor={sketchColor}
                 onSketchColorChange={setSketchColor}
                 sketchColorDisabled={circleDisabled}

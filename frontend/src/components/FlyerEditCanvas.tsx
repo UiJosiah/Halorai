@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FlyerImage } from "@/contexts/CreateDesignContext";
-import { pickSingleImageFile } from "@/lib/singleImagePick";
+import {
+  createAttachedImages,
+  MAX_ATTACH_IMAGES,
+  pickImageFiles,
+  revokeAttachedImages,
+  type AttachedImage,
+} from "@/lib/imageAttach";
 import {
   cropSketchPreviewUrl,
   drawSketchPreview,
@@ -18,7 +24,7 @@ export type PendingFlyerRegion = {
   maskBlob: Blob;
   previewUrl: string;
   prompt: string;
-  referenceImage: File | null;
+  referenceImages: File[];
 };
 
 type Props = {
@@ -46,10 +52,8 @@ export default function FlyerEditCanvas({ flyerImage, resetKey, circleMode, sket
     top: number;
   } | null>(null);
   const [popupPrompt, setPopupPrompt] = useState("");
-  const [popupRef, setPopupRef] = useState<File | null>(null);
-  const [popupRefPreviewUrl, setPopupRefPreviewUrl] = useState<string | null>(null);
+  const [popupRefs, setPopupRefs] = useState<AttachedImage[]>([]);
   const popupInsertRef = useRef<HTMLInputElement | null>(null);
-  const popupRefUrlRef = useRef<string | null>(null);
 
   const drawing = useRef(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -78,12 +82,10 @@ export default function FlyerEditCanvas({ flyerImage, resetKey, circleMode, sket
     clearSketchCanvas();
     setPopup(null);
     setPopupPrompt("");
-    setPopupRef(null);
-    if (popupRefUrlRef.current) {
-      URL.revokeObjectURL(popupRefUrlRef.current);
-      popupRefUrlRef.current = null;
-    }
-    setPopupRefPreviewUrl(null);
+    setPopupRefs((prev) => {
+      revokeAttachedImages(prev);
+      return [];
+    });
   }, [resetKey, circleMode, clearSketchCanvas]);
 
   const toCanvasPoint = useCallback(
@@ -128,16 +130,23 @@ export default function FlyerEditCanvas({ flyerImage, resetKey, circleMode, sket
   const closePopup = useCallback(() => {
     setPopup(null);
     setPopupPrompt("");
-    setPopupRef(null);
-    if (popupRefUrlRef.current) {
-      URL.revokeObjectURL(popupRefUrlRef.current);
-      popupRefUrlRef.current = null;
-    }
-    setPopupRefPreviewUrl(null);
+    setPopupRefs((prev) => {
+      revokeAttachedImages(prev);
+      return [];
+    });
     sketchPointsRef.current = [];
     clearSketchCanvas();
     if (popupInsertRef.current) popupInsertRef.current.value = "";
   }, [clearSketchCanvas]);
+
+  const removePopupRef = useCallback((id: string) => {
+    setPopupRefs((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((item) => item.id !== id);
+    });
+    if (popupInsertRef.current) popupInsertRef.current.value = "";
+  }, []);
 
   const openPopupForSketch = useCallback(
     async (points: FlyerSketch) => {
@@ -165,7 +174,10 @@ export default function FlyerEditCanvas({ flyerImage, resetKey, circleMode, sket
       clearSketchCanvas();
       setPopup({ layout, maskBlob, previewUrl, left, top });
       setPopupPrompt("");
-      setPopupRef(null);
+      setPopupRefs((prev) => {
+        revokeAttachedImages(prev);
+        return [];
+      });
     },
     [layout, clearSketchCanvas]
   );
@@ -215,10 +227,12 @@ export default function FlyerEditCanvas({ flyerImage, resetKey, circleMode, sket
       maskBlob: popup.maskBlob,
       previewUrl: popup.previewUrl,
       prompt: popupPrompt.trim(),
-      referenceImage: popupRef,
+      referenceImages: popupRefs.map((item) => item.file),
     });
     closePopup();
   };
+
+  const popupAttachFull = popupRefs.length >= MAX_ATTACH_IMAGES;
 
   if (!layout) return null;
 
@@ -244,29 +258,25 @@ export default function FlyerEditCanvas({ flyerImage, resetKey, circleMode, sket
           style={{ left: popup.left, top: popup.top }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          {popupRefPreviewUrl ? (
-            <div className="relative mb-2 inline-flex shrink-0 self-start">
-              <img
-                src={popupRefPreviewUrl}
-                alt=""
-                className="h-8 w-8 rounded-lg border border-[hsl(0,0%,88%)] object-cover"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setPopupRef(null);
-                  if (popupRefUrlRef.current) {
-                    URL.revokeObjectURL(popupRefUrlRef.current);
-                    popupRefUrlRef.current = null;
-                  }
-                  setPopupRefPreviewUrl(null);
-                  if (popupInsertRef.current) popupInsertRef.current.value = "";
-                }}
-                className="absolute -right-0.5 -top-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border-none bg-[hsl(15,100%,55%)]"
-                aria-label="Remove image"
-              >
-                <img src="/Halorai Dev/Icons/cancel.svg" alt="" className="h-3 w-3 brightness-0 invert" />
-              </button>
+          {popupRefs.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {popupRefs.map((item) => (
+                <div key={item.id} className="relative inline-flex shrink-0 self-start">
+                  <img
+                    src={item.previewUrl}
+                    alt=""
+                    className="h-8 w-8 rounded-lg border border-[hsl(0,0%,88%)] object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePopupRef(item.id)}
+                    className="absolute -right-0.5 -top-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border-none bg-[hsl(15,100%,55%)]"
+                    aria-label="Remove image"
+                  >
+                    <img src="/Halorai Dev/Icons/cancel.svg" alt="" className="h-3 w-3 brightness-0 invert" />
+                  </button>
+                </div>
+              ))}
             </div>
           ) : null}
           <textarea
@@ -280,24 +290,22 @@ export default function FlyerEditCanvas({ flyerImage, resetKey, circleMode, sket
             ref={popupInsertRef}
             type="file"
             accept="image/*"
+            multiple
             className="hidden"
             onChange={(e) => {
-              const f = pickSingleImageFile(e.target.files);
+              const files = pickImageFiles(e.target.files, MAX_ATTACH_IMAGES - popupRefs.length);
               e.target.value = "";
-              if (!f) return;
-              if (popupRefUrlRef.current) URL.revokeObjectURL(popupRefUrlRef.current);
-              const url = URL.createObjectURL(f);
-              popupRefUrlRef.current = url;
-              setPopupRefPreviewUrl(url);
-              setPopupRef(f);
+              if (!files.length) return;
+              setPopupRefs((prev) => [...prev, ...createAttachedImages(files, prev.length)]);
             }}
           />
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
-              title="Insert reference image"
+              title={popupAttachFull ? `Maximum ${MAX_ATTACH_IMAGES} images` : "Insert reference image"}
+              disabled={popupAttachFull}
               onClick={() => popupInsertRef.current?.click()}
-              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-[hsl(0,0%,96%)] hover:bg-[hsl(0,0%,92%)]"
+              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-[hsl(0,0%,96%)] hover:bg-[hsl(0,0%,92%)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
                 <path

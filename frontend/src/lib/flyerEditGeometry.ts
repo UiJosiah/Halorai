@@ -5,11 +5,6 @@ export const FLYER_EDIT_MIN_STROKE_LEN = 24;
 export const FLYER_EDIT_SKETCH_STROKE_RATIO = 0.014;
 
 export const FLYER_SKETCH_COLORS = [
-  { id: "blue", label: "Blue", value: "hsl(210,100%,55%)" },
-  { id: "pink", label: "Pink", value: "hsl(330,100%,65%)" },
-  { id: "yellow", label: "Yellow", value: "hsl(45,100%,52%)" },
-  { id: "green", label: "Green", value: "hsl(140,65%,42%)" },
-  { id: "red", label: "Red", value: "hsl(5,85%,55%)" },
   { id: "black", label: "Black", value: "hsl(0,0%,10%)" },
   { id: "white", label: "White", value: "hsl(0,0%,100%)" },
 ] as const;
@@ -150,4 +145,106 @@ export async function flyerImageToPngBlob(img: FlyerImage): Promise<Blob> {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new Blob([bytes], { type: img.mimeType || "image/png" });
+}
+
+function loadMaskImage(blob: Blob): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load mask"));
+    };
+    img.src = url;
+  });
+}
+
+/** Union multiple white-on-black masks into one (one API call for all regions). */
+export async function mergeMaskBlobs(blobs: Blob[]): Promise<Blob | null> {
+  if (!blobs.length) return null;
+  if (blobs.length === 1) return blobs[0];
+
+  const images = await Promise.all(blobs.map(loadMaskImage));
+  const w = images[0].naturalWidth;
+  const h = images[0].naturalHeight;
+
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext("2d");
+  if (!ctx) return null;
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = "lighter";
+  for (const img of images) {
+    ctx.drawImage(img, 0, 0, w, h);
+  }
+
+  return new Promise((resolve) => out.toBlob((b) => resolve(b), "image/png", 1));
+}
+
+export type RegionBatchItem = { prompt: string; referenceImages: File[] };
+
+/** One combined prompt + flat attachment list for a single inpaint call. */
+export function buildBatchRegionPrompt(regions: RegionBatchItem[]): {
+  prompt: string;
+  referenceImages: File[];
+} {
+  const n = regions.length;
+  const attachmentStart = 3 + n;
+
+  if (n === 1) {
+    const region = regions[0];
+    const lines = [
+      "Reference #1: current flyer. Reference #2: edit mask (white = editable zone).",
+    ];
+    if (region.referenceImages.length) {
+      lines.push("Reference #3: user attachment for this edit.");
+    }
+    lines.push(
+      "",
+      "Apply this edit ONLY where reference image #2 is white.",
+      region.referenceImages.length ? "Use reference image #3 as described below." : "",
+      "",
+      region.prompt.trim()
+    );
+    return {
+      prompt: lines.filter(Boolean).join("\n"),
+      referenceImages: [...region.referenceImages],
+    };
+  }
+
+  const referenceImages: File[] = [];
+  const lines: string[] = [
+    "Apply ALL edits below in ONE pass on the current flyer.",
+    "Reference #1: current flyer.",
+    "Reference #2: combined mask (white = any editable zone).",
+    `References #3–#${2 + n}: one mask per edit — apply each edit ONLY where its mask is white.`,
+    "",
+  ];
+
+  regions.forEach((region, index) => {
+    const editNum = index + 1;
+    const maskRef = 3 + index;
+    let attachmentLine = "";
+    if (region.referenceImages.length) {
+      const startIdx = attachmentStart + referenceImages.length;
+      const refNums = region.referenceImages.map((_, j) => startIdx + j);
+      referenceImages.push(...region.referenceImages);
+      attachmentLine =
+        refNums.length === 1
+          ? ` Use reference image #${refNums[0]}.`
+          : ` Use reference images #${refNums.join(", #")}.`;
+    }
+    lines.push(`Edit ${editNum} — ONLY where reference image #${maskRef} is white${attachmentLine}`);
+    lines.push(region.prompt.trim());
+    lines.push("");
+  });
+
+  return { prompt: lines.join("\n").trim(), referenceImages };
 }

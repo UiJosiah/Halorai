@@ -179,17 +179,37 @@ export async function aiGenerateFlyer(payload: {
   return await requestJson<AiFlyerResponse>(apiUrl("/api/ai/flyer"), { method: "POST", body: fd });
 }
 
-/** Masked inpaint on the final flyer (white mask = edit). Requires OpenAI on the server. */
+/** Full-flyer edit from Step 5 sidebar — current flyer + optional attachments + message. */
+export async function aiFlyerEdit(payload: {
+  flyerImage: Blob;
+  message: string;
+  referenceImages?: File[];
+  model?: string;
+}): Promise<AiFlyerResponse> {
+  const fd = new FormData();
+  fd.append("flyerImage", payload.flyerImage, "flyer.png");
+  fd.append("message", payload.message);
+  for (const f of payload.referenceImages ?? []) fd.append("referenceImages", f);
+  if (payload.model) fd.append("model", payload.model);
+
+  return await requestJson<AiFlyerResponse>(apiUrl("/api/ai/flyer/edit"), { method: "POST", body: fd });
+}
+
+/** Masked inpaint on the final flyer (white mask = edit). */
 export async function aiFlyerInpaint(payload: {
   image: Blob;
   mask: Blob;
   prompt: string;
+  regionMasks?: Blob[];
+  referenceImages?: File[];
   model?: string;
 }): Promise<AiFlyerResponse> {
   const fd = new FormData();
   fd.append("image", payload.image, "flyer.png");
   fd.append("mask", payload.mask, "mask.png");
   fd.append("prompt", payload.prompt);
+  for (const m of payload.regionMasks ?? []) fd.append("regionMasks", m, "region-mask.png");
+  for (const f of payload.referenceImages ?? []) fd.append("referenceImages", f);
   if (payload.model) fd.append("model", payload.model);
 
   return await requestJson<AiFlyerResponse>(apiUrl("/api/ai/flyer/inpaint"), { method: "POST", body: fd });
