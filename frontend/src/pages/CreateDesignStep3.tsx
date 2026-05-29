@@ -521,15 +521,6 @@ const CreateDesignStep3 = () => {
                       />
                     </svg>
                   </button>
-                  <button
-                    type="button"
-                    title="Continue with this concept"
-                    disabled={lockConceptActions || isAnalyzing || !hasCustomConcept}
-                    onClick={() => setSelectedConceptId(CUSTOM_CONCEPT_ID)}
-                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-black transition-colors hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <img src="/Halorai Dev/Icons/send Vector.svg" alt="Continue" className="h-4 w-4" />
-                  </button>
                 </div>
               </div>
 
