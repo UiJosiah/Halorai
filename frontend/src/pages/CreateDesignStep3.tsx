@@ -5,12 +5,7 @@ import CreateDesignHero from "@/components/CreateDesignHero";
 import StepperProgress from "@/components/StepperProgress";
 import { CUSTOM_CONCEPT_ID, useCreateDesign } from "@/contexts/CreateDesignContext";
 import { aiGenerateText } from "@/lib/api";
-import ArcLoader from "@/components/ArcLoader";
 import { pickSingleImageFile } from "@/lib/singleImagePick";
-
-/** Column 1: ArcLoader slot (same layout as original standalone loader). */
-const LEFT_CONTENT_SLOT =
-  "ml-0 flex w-full min-w-0 max-w-full min-h-[min(220px,45vw)] shrink flex-col items-center md:items-start md:ml-2 lg:ml-4";
 
 /** Mood board in left column — same responsive card pattern as `HaloRAI` community grid. */
 const BASE_COLOUR_IMAGES: { src: string; alt: string }[] = [
@@ -326,9 +321,6 @@ const CreateDesignStep3 = () => {
     if (conceptInsertInputRef.current) conceptInsertInputRef.current.value = "";
   };
 
-  /** Left-column analyzer: show while generating and after a suggestion is ready. */
-  const showLeftAnalyzer = isAnalyzing || hasCustomConcept;
-
   return (
     <AppLayout>
       <CreateDesignHero title="Create Design" />
@@ -336,47 +328,21 @@ const CreateDesignStep3 = () => {
 
       <div className="px-4 xs:px-0">
         <div className="min-w-0 overflow-hidden border border-[hsl(0,0%,80%)] rounded-2xl p-4 sm:p-6 md:p-8">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,auto)] md:items-stretch lg:gap-8">
+          <div className="grid min-w-0 grid-cols-1 gap-6 sm:gap-9 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,auto)] md:items-stretch lg:gap-12">
             {/* Left Column */}
-            <div className="flex min-w-0 w-full max-w-full flex-col">
-              <h2 className="mb-1 text-lg font-semibold text-[hsl(0,0%,10%)] md:mb-5 md:text-xl">
+            {/* <div className="flex min-w-0 w-full max-w-full flex-col"> */}
+              {/* <h2 className="mb-1 text-lg font-semibold text-[hsl(0,0%,10%)] md:mb-5 md:text-xl">
                 Background Concept
               </h2>
               <p className="mb-8 max-w-full text-sm text-[hsl(0,0%,55%)] md:mb-12">
                 Pick a base colour, then describe your background or use Suggest concept
-              </p>
+              </p> */}
 
-              <div className="mt-4 flex w-full min-w-0 flex-col items-start justify-start gap-6">
-                {showLeftAnalyzer ? (
-                  <div className={LEFT_CONTENT_SLOT}>
-                    <div className="flex flex-1 flex-col items-center justify-start pt-0">
-                      <div className="w-full max-w-[min(100%,11.25rem)]">
-                      <ArcLoader
-                        fluid
-                        size={180}
-                        label={
-                          isAnalyzing ? (
-                            <span>
-                              Analyzing
-                              <br />
-                              your theme...
-                            </span>
-                          ) : (
-                            <img src="/Halorai Dev/Images/checkmark.svg" alt="Done" className="w-14 h-14" />
-                          )
-                        }
-                        spinning={isAnalyzing}
-                        spinDurationMs={2600}
-                      />
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
-              <h2 className="text-lg font-semibold text-[hsl(0,0%,10%)] md:text-xl">
+              <div className="flex w-full min-w-0 flex-col items-start justify-start gap-6">
+              <h2 className="text-lg font-bold text-[hsl(0,0%,10%)] md:text-xl">
                 Select Base Colour
               </h2>
-                <div className="ml-0 w-full min-w-0 max-w-full md:ml-2 lg:ml-4">
+                <div className="w-full min-w-0 max-w-full">
                   <div className={SWATCH_GRID_CLASS}>
                     {BASE_COLOUR_IMAGES.map((item) => {
                       const selected = baseColourChoice === item.src;
@@ -421,7 +387,7 @@ const CreateDesignStep3 = () => {
                   </button>
                 </div>
               </div>
-            </div>
+            {/* </div> */}
 
             {/* Right Column — concept composer (Step 3ii-style) + AI suggestions */}
             <div className="flex min-w-0 w-full max-w-full flex-col gap-4">
