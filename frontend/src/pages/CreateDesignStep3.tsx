@@ -479,16 +479,19 @@ const CreateDesignStep3 = () => {
                       disabled={suggestConceptDisabled}
                       onClick={() => void generateConcepts()}
                       aria-label={`Suggest concept (${suggestCount} of ${MAX_SUGGEST_PER_THEME} used for this theme)`}
+                      aria-busy={isAnalyzing}
                       className={`shrink-0 border-none bg-transparent p-0 transition-opacity ${
-                        suggestConceptDisabled
-                          ? "cursor-not-allowed opacity-50"
-                          : "cursor-pointer hover:opacity-80"
+                        isAnalyzing
+                          ? "cursor-not-allowed"
+                          : suggestConceptDisabled
+                            ? "cursor-not-allowed opacity-50"
+                            : "cursor-pointer hover:opacity-80"
                       }`}
                     >
                       <img
                         src="/Halorai Dev/Icons/suggest concept.png"
                         alt=""
-                        className="h-9 w-auto object-contain sm:h-10"
+                        className={`h-9 w-auto object-contain sm:h-10 ${isAnalyzing ? "animate-suggest-blink" : ""}`}
                       />
                     </button>
                     <span

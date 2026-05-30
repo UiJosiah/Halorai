@@ -421,81 +421,82 @@ const CreateDesignStep5 = () => {
     return !message.trim();
   }, [busy, canGenerate, flyerImage, hasRegions, message]);
 
+  const showCenterLoader =
+    !assetsHydrated || isPreparing || isApplyingEdits || (!flyerImage && !error);
+
+  useEffect(() => {
+    if (busy || !flyerImage) setIsDownloadOpen(false);
+  }, [busy, flyerImage]);
+
   return (
     <AppLayout>
       <CreateDesignHero title="Create Design" />
       <StepperProgress currentStep={5} />
 
       <div className="px-4 xs:px-0">
-        <div className="rounded-2xl border border-[hsl(0,0%,80%)] p-6 md:p-8">
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-[0.35fr_0.45fr_0.35fr] md:gap-4">
-            {/* Left Column - Analysing theme */}
-            <div className="items-center justify-center">
-              <h2 className="mb-6 text-lg font-semibold text-[hsl(0,0%,10%)] md:text-xl">Preparing Your Design</h2>
-
-              <div className="my-20 pl-4">
-                <ArcLoader
-                  size={220}
-                  label={
-                    !assetsHydrated ? (
-                      "Loading..."
-                    ) : isPreparing || isApplyingEdits ? (
-                      <span>
-                        {isApplyingEdits ? (
-                          <>
-                            Applying
-                            <br />
-                            your edits...
-                          </>
-                        ) : (
-                          <>
-                            Compositing
-                            <br />
-                            your flyer...
-                          </>
-                        )}
-                      </span>
-                    ) : canGenerate ? (
-                      <img src="/Halorai Dev/Images/checkmark.svg" alt="Done" className="h-14 w-14" />
+        <div className="min-w-0 overflow-hidden rounded-2xl border border-[hsl(0,0%,80%)] p-4 sm:p-6 md:p-8">
+          <div className="mx-auto flex w-full max-w-6xl flex-col items-center gap-6 sm:gap-8 md:flex-row md:items-start md:justify-center lg:gap-12">
+            {/* Left — flyer preview with overlay loader */}
+            <div className="flex w-fit max-w-full shrink-0 flex-col">
+              <div className="relative inline-flex max-w-full flex-col items-stretch">
+                <div className="relative overflow-hidden rounded-2xl bg-[hsl(0,0%,88%)] ring-1 ring-[hsl(0,0%,90%)]">
+                  <div className="relative">
+                    {flyerImage ? (
+                      <>
+                        <img
+                          src={`data:${flyerImage.mimeType};base64,${flyerImage.base64}`}
+                          alt="Design Preview"
+                          className="block h-auto max-h-[min(75vh,640px)] w-auto max-w-full object-contain"
+                        />
+                        <FlyerEditCanvas
+                          flyerImage={flyerImage}
+                          resetKey={flyerKey}
+                          circleMode={circleMode}
+                          sketchColor={sketchColor}
+                          disabled={busy || maxRegionsReached}
+                          onAddRegion={handleAddRegion}
+                        />
+                      </>
                     ) : (
-                      "Missing info"
-                    )
-                  }
-                  spinning={!assetsHydrated || isPreparing || isApplyingEdits}
-                  spinDurationMs={3200}
-                />
-              </div>
-            </div>
+                      <div
+                        className="aspect-[4/5] w-full min-w-[240px] bg-transparent sm:min-w-[280px] md:min-w-[320px] lg:min-w-[380px] xl:min-w-[440px]"
+                        aria-label="Design preview loading"
+                      />
+                    )}
 
-            {/* Middle Column — flyer preview + circle overlay + download */}
-            <div className="flex min-h-0 items-center justify-center px-2">
-              <div className="inline-flex max-w-full flex-col items-stretch">
-                <div className="relative overflow-hidden rounded-xl bg-[hsl(0,0%,94%)] ring-1 ring-[hsl(0,0%,92%)]">
-                  {flyerImage ? (
-                    <>
-                      <img
-                        src={`data:${flyerImage.mimeType};base64,${flyerImage.base64}`}
-                        alt="Design Preview"
-                        className="block h-auto max-h-[min(75vh,640px)] w-auto max-w-full object-contain"
-                      />
-                      <FlyerEditCanvas
-                        flyerImage={flyerImage}
-                        resetKey={flyerKey}
-                        circleMode={circleMode}
-                        sketchColor={sketchColor}
-                        disabled={busy || maxRegionsReached}
-                        onAddRegion={handleAddRegion}
-                      />
-                    </>
-                  ) : (
-                    <div
-                      className="aspect-[4/5] w-full min-w-[240px] bg-transparent sm:min-w-[280px] md:min-w-[320px] lg:min-w-[380px] xl:min-w-[440px]"
-                      aria-label="Design preview loading"
-                    />
-                  )}
+                    {showCenterLoader ? (
+                      <div className="absolute inset-0 z-[2] flex items-center justify-center backdrop-blur-[2px] bg-black/40">
+                        <div className="w-[min(100%,11.25rem)] max-w-full">
+                          <ArcLoader
+                            fluid
+                            size={180}
+                            label={
+                              !assetsHydrated ? (
+                                "Loading..."
+                              ) : isApplyingEdits ? (
+                                <span>
+                                  Applying
+                                  <br />
+                                  your edits...
+                                </span>
+                              ) : (
+                                <span>
+                                  Compositing
+                                  <br />
+                                  your flyer...
+                                </span>
+                              )
+                            }
+                            spinning={!assetsHydrated || isPreparing || isApplyingEdits}
+                            spinDurationMs={2600}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
 
-                <div className="mt-4 flex w-full items-center justify-between gap-3">
+                <div className="mt-4 flex w-full min-w-0 items-center justify-between gap-3">
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
@@ -595,10 +596,25 @@ const CreateDesignStep5 = () => {
                   </div>
                 </div>
               </div>
+
+              {error ? (
+                <div className="mt-3 w-full max-w-full text-sm text-[hsl(15,100%,40%)]">
+                  <span>{error}</span>
+                  {canGenerate ? (
+                    <button
+                      type="button"
+                      onClick={() => void generateFlyer()}
+                      className="ml-3 rounded-full border-none bg-[hsl(0,0%,10%)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[hsl(0,0%,25%)]"
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
-            {/* Right Column — edit panel */}
-            <div className="flex h-full flex-col items-center md:justify-center">
+            {/* Right — edit panel */}
+            <div className="flex w-full min-w-0 max-w-[420px] shrink flex-col md:w-[min(100%,420px)]">
               <FlyerEditPanel
                 regions={regions}
                 onRemoveRegion={handleRemoveRegion}
@@ -620,20 +636,6 @@ const CreateDesignStep5 = () => {
                 onSketchColorChange={setSketchColor}
                 sketchColorDisabled={circleDisabled}
               />
-
-              {error ? (
-                <div className="mt-3 w-full max-w-[420px]">
-                  <div className="text-xs text-[hsl(15,100%,45%)]">{error}</div>
-                  {canGenerate ? (
-                    <button
-                      onClick={() => void generateFlyer()}
-                      className="mt-3 inline-flex items-center justify-center rounded-full border-none bg-[hsl(0,0%,10%)] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[hsl(0,0%,20%)]"
-                    >
-                      Retry
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
