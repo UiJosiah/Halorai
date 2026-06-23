@@ -157,6 +157,60 @@ export type AiFlyerResponse = {
   images: { mimeType: string; base64: string }[];
 };
 
+export type FlyerPluginResponse = {
+  ministerCount: number;
+  templateBucket: string;
+  aspectRatio: string;
+  eventDetails: Record<string, string>;
+  ministersMeta: { name: string; title: string }[];
+  backgroundImage: AiImageReference & { filename?: string };
+  logos: (AiImageReference & { filename?: string })[];
+  ministers: (AiImageReference & { filename?: string })[];
+};
+
+export type FlyerLayersJsonPayload = {
+  ministerCount?: number;
+  templateBucket?: string;
+  eventDetails: Record<string, string>;
+  concept?: string;
+  ministersMeta?: { name: string; title: string }[];
+  backgroundImage: AiImageReference & { filename?: string };
+  logos?: (AiImageReference & { filename?: string })[];
+  ministers?: (AiImageReference & { filename?: string })[];
+  aspectRatio?: string;
+  useSamplePayload?: boolean;
+};
+
+export type FlyerSamplePayloadResponse = {
+  description: string;
+  request: FlyerLayersJsonPayload;
+  payload: FlyerPluginResponse;
+};
+
+/** Prefilled plugin handoff JSON for Photoshop testing. */
+export async function flyerSamplePayload(): Promise<FlyerSamplePayloadResponse> {
+  return await requestJson<FlyerSamplePayloadResponse>(apiUrl("/api/ai/flyer/sample-payload"));
+}
+
+/** Plugin handoff JSON — ministerCount, templateBucket, images, text (no template image). */
+export async function flyerComposeJson(payload: FlyerLayersJsonPayload): Promise<FlyerPluginResponse> {
+  return await requestJson<FlyerPluginResponse>(apiUrl("/api/ai/flyer/json"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Bundled demo plugin payload — same as GET /api/ai/flyer/json */
+export async function flyerComposeJsonGet(): Promise<FlyerPluginResponse> {
+  return await requestJson<FlyerPluginResponse>(apiUrl("/api/ai/flyer/json"));
+}
+
+/** URL to download a ZIP of real PNG/JPG layer files (open in browser to save). */
+export function flyerLayersZipUrl(): string {
+  return apiUrl("/api/ai/flyer/layers.zip");
+}
+
 export async function aiGenerateFlyer(payload: {
   eventDetails: unknown;
   concept?: string;

@@ -50,5 +50,9 @@ Matches the pattern used in Keji (`Procfile` + `gunicorn_config.py`), but **with
 - `DELETE /api/uploads/logos/<id>`
 - `POST /api/uploads/ministers` (multipart form-data `files`)
 - `DELETE /api/uploads/ministers/<id>`
+- `GET /api/ai/flyer/sample-payload` — prefilled flyer layers JSON (event details + base64 images) for Photoshop testing
+- `GET /api/ai/flyer/layers.zip` — ZIP for **Photoshop plugin**: background, logos, ministers, `manifest.json` (`ministerCount`, `templateBucket`, text). No template image — PSD lives in Photoshop.
+- `POST /api/ai/flyer/layers.zip` — same ZIP from a JSON body
+- `GET /api/ai/flyer/json` — demo flyer layers as JSON (base64)
 - `GET /uploads/<path>` serves uploaded files
 

@@ -49,6 +49,11 @@ def _bucket_name(minister_count: int) -> str:
   return f"{n}-ministers"
 
 
+def minister_bucket(minister_count: int) -> str:
+  """PSD folder key from minister count (e.g. 0-minister, 2-ministers)."""
+  return _bucket_name(minister_count)
+
+
 def pick_template_image(minister_count: int) -> Tuple[Path, str]:
   root = _templates_root()
   if not root:
