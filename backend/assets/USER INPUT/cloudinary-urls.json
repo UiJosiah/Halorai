@@ -1,0 +1,13 @@
+{
+  "uploaded_at": "2026-06-23T10:55:51.555492+00:00",
+  "source_mtime": {
+    "Background Concept.jpg": 1781198330.0,
+    "Church Logo.png": 1772876482.0,
+    "Johnny Mikey.jpg": 1774576944.0
+  },
+  "background_image": "https://res.cloudinary.com/drrj5v6nu/image/upload/v1782212145/halorai/test-flyer/test-flyer-background.jpg",
+  "church_logo": "https://res.cloudinary.com/drrj5v6nu/image/upload/v1782212146/halorai/test-flyer/test-flyer-logo.png",
+  "minister_photos": [
+    "https://res.cloudinary.com/drrj5v6nu/image/upload/v1782212151/halorai/test-flyer/test-flyer-minister-1.jpg"
+  ]
+}

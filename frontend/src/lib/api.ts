@@ -157,6 +157,33 @@ export type AiFlyerResponse = {
   images: { mimeType: string; base64: string }[];
 };
 
+/** Photoshop UXP payload — keys match PSD folder/layer names. */
+export type TestFlyerLayers = {
+  Details: {
+    Venue: string;
+    Date: string;
+    Time: string;
+  };
+  "Event Name": string;
+  "Minister Name": string[];
+  "Minister Picture": string[];
+  Theme: string;
+  Logo: string;
+  "Church Name": string;
+  Background: string;
+};
+
+export type TestFlyerResponse = {
+  template: string;
+  minister_count: number;
+  layers: TestFlyerLayers;
+};
+
+export async function fetchTestFlyerJson(refresh = false): Promise<TestFlyerResponse> {
+  const q = refresh ? "?refresh=1" : "";
+  return await requestJson<TestFlyerResponse>(apiUrl(`/api/test-flyer${q}`));
+}
+
 export type FlyerPluginResponse = {
   ministerCount: number;
   templateBucket: string;

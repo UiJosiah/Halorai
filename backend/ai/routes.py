@@ -16,6 +16,7 @@ from .ai_client import (
   recreate_image_base64,
 )
 from .blend_engine import blend_concept_over_base
+from .cloudinary_assets import build_test_flyer_json
 from .flyer_compose import (
   FlyerComposeInput,
   build_flyer_layers_zip,
@@ -469,6 +470,26 @@ def _run_flyer_compose(bundle, *, endpoint: str, template_title: str, template_f
       "images": images,
     }
   )
+
+
+@ai_bp.get("/api/test-flyer")
+def test_flyer():
+  """
+  Photoshop UXP test JSON — PSD layer names + Cloudinary image URLs.
+  Reads backend/assets/USER INPUT/ (Details.txt + images).
+  Response: { template, minister_count, layers: { Details, Event Name, ... } }
+  ?refresh=1 forces re-upload to Cloudinary.
+  """
+  force = (request.args.get("refresh") or "").lower() in ("1", "true", "yes")
+  try:
+    return jsonify(build_test_flyer_json(force_upload=force))
+  except FileNotFoundError as e:
+    return _json_error(str(e), 503)
+  except RuntimeError as e:
+    return _json_error(str(e), 503)
+  except Exception as e:
+    ai_logger.exception("test_flyer failed")
+    return _json_error(f"Failed to build test flyer JSON: {e}", 500)
 
 
 @ai_bp.get("/api/ai/flyer/sample-payload")
