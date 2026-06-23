@@ -475,19 +475,30 @@ def _run_flyer_compose(bundle, *, endpoint: str, template_title: str, template_f
 def ai_flyer_sample_payload():
   """
   Returns a prefilled flyer layer bundle (event details + base64 images).
-  For Photoshop / external compositor testing — no prompt or model fields.
+  For Photoshop plugin handoff.
   """
-  return jsonify(build_sample_flyer_json_payload())
+  try:
+    return jsonify(build_sample_flyer_json_payload())
+  except FileNotFoundError as e:
+    return _json_error(str(e), 503)
+  except Exception as e:
+    ai_logger.exception("ai_flyer_sample_payload failed")
+    return _json_error(f"Failed to build sample plugin payload: {e}", 500)
 
 
 @ai_bp.get("/api/ai/flyer/json")
 def ai_flyer_json_get():
   """
   Returns bundled demo flyer layers (same as POST { useSamplePayload: true }).
-  For Photoshop / external compositor testing.
+  For Photoshop plugin handoff.
   """
-  sample = build_sample_flyer_json_payload()
-  return jsonify(sample["payload"])
+  try:
+    return jsonify(flyer_plugin_json(build_sample_flyer_input()))
+  except FileNotFoundError as e:
+    return _json_error(str(e), 503)
+  except Exception as e:
+    ai_logger.exception("ai_flyer_json_get failed")
+    return _json_error(f"Failed to build sample plugin payload: {e}", 500)
 
 
 @ai_bp.post("/api/ai/flyer/json")
@@ -518,7 +529,11 @@ def ai_flyer_json():
 
 
 def _flyer_layers_zip_response(inp: FlyerComposeInput):
-  data = build_flyer_layers_zip(inp)
+  try:
+    data = build_flyer_layers_zip(inp)
+  except Exception as e:
+    ai_logger.exception("flyer_layers_zip failed")
+    raise
   return send_file(
     io.BytesIO(data),
     mimetype="application/zip",
@@ -533,22 +548,34 @@ def flyer_layers_zip_get():
   Download ZIP for Photoshop plugin: background, logos, ministers, manifest.json.
   Template PSD is already in Photoshop — ministerCount + templateBucket pick the layout.
   """
-  return _flyer_layers_zip_response(build_sample_flyer_input())
+  try:
+    return _flyer_layers_zip_response(build_sample_flyer_input())
+  except FileNotFoundError as e:
+    return _json_error(str(e), 503)
+  except Exception as e:
+    ai_logger.exception("flyer_layers_zip_get failed")
+    return _json_error(f"Failed to build plugin ZIP: {e}", 500)
 
 
 @ai_bp.post("/api/ai/flyer/layers.zip")
 def flyer_layers_zip_post():
   """Same as GET, but layers built from JSON body (or useSamplePayload: true)."""
   payload = request.get_json(silent=True) or {}
-  if not payload:
-    return _flyer_layers_zip_response(build_sample_flyer_input())
+  try:
+    if not payload:
+      return _flyer_layers_zip_response(build_sample_flyer_input())
 
-  normalized = normalize_flyer_json_body(payload, default_model=DEFAULT_FLYER_MODEL)
-  inp, err = parse_flyer_json_payload(normalized, default_model=DEFAULT_FLYER_MODEL)
-  if err:
-    return _json_error(err, 400)
-  assert inp is not None
-  return _flyer_layers_zip_response(inp)
+    normalized = normalize_flyer_json_body(payload, default_model=DEFAULT_FLYER_MODEL)
+    inp, err = parse_flyer_json_payload(normalized, default_model=DEFAULT_FLYER_MODEL)
+    if err:
+      return _json_error(err, 400)
+    assert inp is not None
+    return _flyer_layers_zip_response(inp)
+  except FileNotFoundError as e:
+    return _json_error(str(e), 503)
+  except Exception as e:
+    ai_logger.exception("flyer_layers_zip_post failed")
+    return _json_error(f"Failed to build plugin ZIP: {e}", 500)
 
 
 @ai_bp.post("/api/ai/flyer")

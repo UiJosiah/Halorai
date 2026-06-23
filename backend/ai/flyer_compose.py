@@ -631,6 +631,27 @@ def _repo_public_dir() -> Path:
   return backend_root.parent / "public"
 
 
+def _plugin_sample_image_paths() -> tuple[Path, Path, Path]:
+  """
+  Demo/plugin sample images. Uses backend/assets/plugin-sample on Render (rootDir=backend).
+  Falls back to repo public/ when running the full monorepo locally.
+  """
+  backend_root = Path(__file__).resolve().parents[1]
+  bundled = backend_root / "assets" / "plugin-sample"
+  if (bundled / "background.png").is_file():
+    return (
+      bundled / "background.png",
+      bundled / "logo.png",
+      bundled / "minister.png",
+    )
+  public_images = backend_root.parent / "public" / "Halorai Dev" / "Images"
+  return (
+    public_images / "Easter retreat.png",
+    public_images / "Ellipse 1.png",
+    public_images / "user avatar.png",
+  )
+
+
 def _sample_template_for_ministers(minister_count: int) -> tuple[Path, str]:
   backend_root = Path(__file__).resolve().parents[1]
   if minister_count <= 0:
@@ -721,10 +742,17 @@ def build_flyer_layers_zip(inp: FlyerComposeInput) -> bytes:
 
 def build_sample_flyer_input() -> FlyerComposeInput:
   """Bundled demo assets for testing / Photoshop handoff."""
-  public = _repo_public_dir()
-  bg_path = public / "Halorai Dev" / "Images" / "Easter retreat.png"
-  logo_path = public / "Halorai Dev" / "Images" / "Ellipse 1.png"
-  minister_path = public / "Halorai Dev" / "Images" / "user avatar.png"
+  bg_path, logo_path, minister_path = _plugin_sample_image_paths()
+  for label, p in (
+    ("background", bg_path),
+    ("logo", logo_path),
+    ("minister", minister_path),
+  ):
+    if not p.is_file():
+      raise FileNotFoundError(
+        f"Plugin sample asset missing ({label}): {p}. "
+        "Deploy backend/assets/plugin-sample/ with the backend service."
+      )
 
   ministers_meta = [
     {"name": "Pastor K", "title": "Guest Minister"},
