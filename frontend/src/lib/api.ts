@@ -177,11 +177,72 @@ export type TestFlyerResponse = {
   template: string;
   minister_count: number;
   layers: TestFlyerLayers;
+  /** Present when requested via ?job_id= — ties handoff to plugin export upload. */
+  job_id?: string;
 };
 
-export async function fetchTestFlyerJson(refresh = false): Promise<TestFlyerResponse> {
-  const q = refresh ? "?refresh=1" : "";
+export async function fetchTestFlyerJson(refresh = false, jobId?: string): Promise<TestFlyerResponse> {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "1");
+  if (jobId) params.set("job_id", jobId);
+  const q = params.toString() ? `?${params.toString()}` : "";
   return await requestJson<TestFlyerResponse>(apiUrl(`/api/test-flyer${q}`));
+}
+
+export type PluginFlyerResultResponse = {
+  id: string;
+  url: string;
+  job_id?: string;
+  template?: string;
+  created_at: string;
+  view_url?: string;
+  preview_page?: string;
+};
+
+/** Latest plugin export (preview page). */
+export async function fetchLatestPluginFlyerResult(): Promise<PluginFlyerResultResponse> {
+  return await requestJson<PluginFlyerResultResponse>(apiUrl("/api/plugin/flyer-result/latest"));
+}
+
+/** Recent plugin exports, newest first. */
+export async function fetchPluginFlyerResults(limit = 20): Promise<{ items: PluginFlyerResultResponse[] }> {
+  return await requestJson<{ items: PluginFlyerResultResponse[] }>(
+    apiUrl(`/api/plugin/flyer-results?limit=${limit}`),
+  );
+}
+
+/** Latest plugin export by result id or job_id. */
+export async function fetchPluginFlyerResult(idOrJobId: string): Promise<PluginFlyerResultResponse> {
+  return await requestJson<PluginFlyerResultResponse>(
+    apiUrl(`/api/plugin/flyer-result/${encodeURIComponent(idOrJobId)}`),
+  );
+}
+
+/** Opens or embeds the export — redirects to Cloudinary. */
+export function pluginFlyerResultViewUrl(idOrJobId: string): string {
+  return apiUrl(`/api/plugin/flyer-result/${encodeURIComponent(idOrJobId)}/view`);
+}
+
+/** Upload finished Photoshop export (web app or plugin testing). */
+export async function uploadPluginFlyerResult(payload: {
+  file: File;
+  jobId?: string;
+  template?: string;
+  pluginApiKey?: string;
+}): Promise<PluginFlyerResultResponse> {
+  const fd = new FormData();
+  fd.append("file", payload.file);
+  if (payload.jobId) fd.append("job_id", payload.jobId);
+  if (payload.template) fd.append("template", payload.template);
+
+  const headers: Record<string, string> = {};
+  if (payload.pluginApiKey) headers["X-Plugin-Key"] = payload.pluginApiKey;
+
+  return await requestJson<PluginFlyerResultResponse>(apiUrl("/api/plugin/flyer-result"), {
+    method: "POST",
+    body: fd,
+    headers,
+  });
 }
 
 export type FlyerPluginResponse = {

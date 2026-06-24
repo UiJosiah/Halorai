@@ -20,6 +20,15 @@ export default defineConfig(({ mode }) => ({
         target: "http://localhost:5000",
         changeOrigin: true,
       },
+      // Backend HTML test pages only — do NOT use "/plugin" (breaks /plugin-preview React route).
+      "/plugin/preview": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
+      "/plugin/upload": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
     },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),

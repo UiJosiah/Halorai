@@ -5,7 +5,7 @@ import time
 import re
 import io
 
-from flask import Blueprint, jsonify, request, g, send_file
+from flask import Blueprint, jsonify, redirect, request, g, send_file, Response
 
 from .ai_client import (
   edit_flyer_base64,
@@ -17,6 +17,15 @@ from .ai_client import (
 )
 from .blend_engine import blend_concept_over_base
 from .cloudinary_assets import build_test_flyer_json
+from .plugin_results import (
+  check_plugin_api_key,
+  enrich_result_links,
+  get_flyer_result,
+  get_latest_flyer_result,
+  list_flyer_results,
+  parse_flyer_result_upload,
+  save_flyer_result_from_bytes,
+)
 from .flyer_compose import (
   FlyerComposeInput,
   build_flyer_layers_zip,
@@ -478,11 +487,13 @@ def test_flyer():
   Photoshop UXP test JSON — PSD layer names + Cloudinary image URLs.
   Reads backend/assets/USER INPUT/ (Details.txt + images).
   Response: { template, minister_count, layers: { Details, Event Name, ... } }
+  ?job_id=abc links handoff to POST /api/plugin/flyer-result for the finished export.
   ?refresh=1 forces re-upload to Cloudinary.
   """
   force = (request.args.get("refresh") or "").lower() in ("1", "true", "yes")
+  job_id = (request.args.get("job_id") or "").strip() or None
   try:
-    return jsonify(build_test_flyer_json(force_upload=force))
+    return jsonify(build_test_flyer_json(force_upload=force, job_id=job_id))
   except FileNotFoundError as e:
     return _json_error(str(e), 503)
   except RuntimeError as e:
@@ -490,6 +501,248 @@ def test_flyer():
   except Exception as e:
     ai_logger.exception("test_flyer failed")
     return _json_error(f"Failed to build test flyer JSON: {e}", 500)
+
+
+def _frontend_origin() -> str | None:
+  raw = (os.environ.get("FRONTEND_ORIGIN") or os.environ.get("CORS_ORIGINS") or "").strip()
+  if not raw:
+    return None
+  return raw.split(",")[0].strip().rstrip("/") or None
+
+
+@ai_bp.post("/api/plugin/flyer-result")
+def plugin_flyer_result_upload():
+  """
+  Photoshop UXP — upload finished flat export (PNG/JPEG/WebP). No job_id required.
+  Multipart: file (required). Optional: template.
+  JSON alternative: { image_base64, mime_type?, template? }
+  Returns { id, url, view_url, preview_page, created_at } — share preview_page with the team.
+  Optional header X-Plugin-Key when PLUGIN_API_KEY is set.
+  """
+  auth_err = check_plugin_api_key(request)
+  if auth_err:
+    return _json_error(auth_err, 401)
+
+  try:
+    data, mime, job_id, template = parse_flyer_result_upload(request)
+    record = save_flyer_result_from_bytes(
+      data,
+      mime=mime,
+      job_id=job_id,
+      template=template,
+    )
+    record = enrich_result_links(
+      record,
+      api_base=request.url_root,
+      frontend_base=_frontend_origin(),
+    )
+    return jsonify(record), 201
+  except ValueError as e:
+    return _json_error(str(e), 400)
+  except RuntimeError as e:
+    return _json_error(str(e), 503)
+  except Exception as e:
+    ai_logger.exception("plugin_flyer_result_upload failed")
+    return _json_error(f"Failed to store plugin export: {e}", 500)
+
+
+@ai_bp.get("/api/plugin/flyer-results")
+def plugin_flyer_results_list():
+  """Recent plugin exports, newest first (for preview page)."""
+  try:
+    limit = int(request.args.get("limit") or "20")
+  except ValueError:
+    limit = 20
+  return jsonify({"items": list_flyer_results(limit=limit)})
+
+
+@ai_bp.get("/api/plugin/flyer-result/latest")
+def plugin_flyer_result_latest():
+  """Latest plugin export — used by the preview page auto-refresh."""
+  record = get_latest_flyer_result()
+  if not record:
+    return _json_error("No plugin exports yet.", 404)
+  return jsonify(record)
+
+
+@ai_bp.get("/api/plugin/flyer-result/<result_id>")
+def plugin_flyer_result_get(result_id: str):
+  """
+  Fetch a plugin export by result id or job_id (latest export for that job).
+  Response: { id, url, job_id?, template?, created_at }
+  """
+  record = get_flyer_result(result_id)
+  if not record:
+    return _json_error("Plugin export not found.", 404)
+  return jsonify(record)
+
+
+@ai_bp.get("/api/plugin/flyer-result/<result_id>/view")
+def plugin_flyer_result_view(result_id: str):
+  """Redirect to the Cloudinary URL for browser / img display."""
+  record = get_flyer_result(result_id)
+  if not record:
+    return _json_error("Plugin export not found.", 404)
+  url = (record.get("url") or "").strip()
+  if not url:
+    return _json_error("Plugin export has no image URL.", 404)
+  return redirect(url, code=302)
+
+
+_PLUGIN_PREVIEW_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Halorai — Plugin export preview</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; background: #111; color: #eee; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px; }
+    p { color: #aaa; margin: 0 0 20px; font-size: 0.9rem; }
+    .main { max-width: 960px; margin: 0 auto; }
+    .card { background: #1a1a1a; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+    img.preview { width: 100%; height: auto; border-radius: 8px; display: block; background: #000; }
+    .meta { font-size: 0.85rem; color: #888; margin-top: 12px; }
+    .empty { color: #888; padding: 48px 16px; text-align: center; }
+    .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .thumbs button { border: 2px solid transparent; padding: 0; border-radius: 6px; cursor: pointer; background: none; }
+    .thumbs button.active { border-color: #7c5cff; }
+    .thumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 4px; display: block; }
+    a { color: #a78bfa; }
+  </style>
+</head>
+<body>
+  <div class="main">
+    <h1>Photoshop plugin export</h1>
+    <p>Latest upload from the UXP plugin. This page refreshes every 5 seconds.</p>
+    <div id="content" class="card empty">Waiting for an export…</div>
+    <div id="history" class="thumbs"></div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    let selectedId = params.get("id") || "";
+
+    async function load() {
+      try {
+        const listRes = await fetch("/api/plugin/flyer-results?limit=12");
+        const listData = await listRes.json();
+        const items = (listData.items || []);
+        if (!items.length) {
+          document.getElementById("content").className = "card empty";
+          document.getElementById("content").innerHTML = "No exports yet. Photoshop dev should POST to <code>/api/plugin/flyer-result</code>.";
+          document.getElementById("history").innerHTML = "";
+          return;
+        }
+        const pick = selectedId
+          ? items.find((x) => x.id === selectedId) || items[0]
+          : items[0];
+        selectedId = pick.id;
+        const when = pick.created_at ? new Date(pick.created_at).toLocaleString() : "";
+        document.getElementById("content").className = "card";
+        document.getElementById("content").innerHTML =
+          '<img class="preview" src="' + pick.url + '" alt="Plugin export" />' +
+          '<div class="meta">' + (pick.template ? pick.template + " · " : "") + when +
+          ' · <a href="' + pick.url + '" target="_blank" rel="noopener">Open full image</a></div>';
+        document.getElementById("history").innerHTML = items.map((it) =>
+          '<button type="button" class="' + (it.id === selectedId ? "active" : "") + '" data-id="' + it.id + '">' +
+          '<img src="' + it.url + '" alt="" /></button>'
+        ).join("");
+        document.querySelectorAll("#history button").forEach((btn) => {
+          btn.onclick = () => {
+            selectedId = btn.getAttribute("data-id");
+            history.replaceState(null, "", "?id=" + selectedId);
+            load();
+          };
+        });
+      } catch (e) {
+        document.getElementById("content").className = "card empty";
+        document.getElementById("content").textContent = "Could not load exports.";
+      }
+    }
+    load();
+    setInterval(load, 5000);
+  </script>
+</body>
+</html>
+"""
+
+
+@ai_bp.get("/plugin/preview")
+def plugin_preview_page():
+  """Standalone page — open in browser to review Photoshop exports (no app integration)."""
+  return Response(_PLUGIN_PREVIEW_HTML, mimetype="text/html; charset=utf-8")
+
+
+_PLUGIN_UPLOAD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Halorai — Test plugin upload</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 1.2rem; }
+    p, label { font-size: 0.9rem; color: #444; }
+    input[type=file] { margin: 12px 0; display: block; }
+    button { padding: 10px 16px; cursor: pointer; }
+    pre { background: #f4f4f4; padding: 12px; overflow: auto; font-size: 0.8rem; }
+    .err { color: #b00020; }
+    a { color: #5b21b6; }
+  </style>
+</head>
+<body>
+  <h1>Test plugin upload</h1>
+  <p>Same as Postman: <code>POST /api/plugin/flyer-result</code> with form field <code>file</code>. Upload may take 15–30s (Cloudinary).</p>
+  <form id="f">
+    <label>Image file (PNG/JPG)</label>
+    <input type="file" name="file" accept="image/png,image/jpeg,image/webp" required />
+    <button type="submit" id="btn">Upload</button>
+  </form>
+  <p id="status"></p>
+  <pre id="out" hidden></pre>
+  <p><a href="/plugin/preview">View preview page</a></p>
+  <script>
+    document.getElementById("f").onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("btn");
+      const status = document.getElementById("status");
+      const out = document.getElementById("out");
+      const fd = new FormData(e.target);
+      btn.disabled = true;
+      status.textContent = "Uploading… (wait for Cloudinary)";
+      status.className = "";
+      out.hidden = true;
+      try {
+        const res = await fetch("/api/plugin/flyer-result", { method: "POST", body: fd });
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = { raw: text }; }
+        out.textContent = JSON.stringify(data, null, 2);
+        out.hidden = false;
+        if (!res.ok) {
+          status.textContent = "Failed (" + res.status + ")";
+          status.className = "err";
+        } else {
+          status.innerHTML = 'OK — <a href="' + (data.preview_page || "/plugin/preview") + '">open preview</a>';
+        }
+      } catch (err) {
+        status.textContent = "Network error — is the backend running on port 5000?";
+        status.className = "err";
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>
+"""
+
+
+@ai_bp.get("/plugin/upload")
+def plugin_upload_test_page():
+  """Browser test form — same POST as Postman / UXP plugin."""
+  return Response(_PLUGIN_UPLOAD_HTML, mimetype="text/html; charset=utf-8")
 
 
 @ai_bp.get("/api/ai/flyer/sample-payload")

@@ -187,16 +187,17 @@ def psd_template_name(minister_count: int) -> str:
   return f"Template Min {n}"
 
 
-def build_test_flyer_json(*, force_upload: bool = False) -> dict[str, Any]:
+def build_test_flyer_json(*, force_upload: bool = False, job_id: str | None = None) -> dict[str, Any]:
   """
   JSON for Photoshop UXP plugin — keys match PSD folder/layer names.
   Template Min N root → Details, Event Name, Minister Name, Minister Picture, Theme, Logo, Church Name, Background.
+  Optional job_id links this handoff to a later POST /api/plugin/flyer-result upload.
   """
   details = parse_user_input_details()
   urls = ensure_cloudinary_urls(force=force_upload)
   minister_count = 1  # one minister for now
 
-  return {
+  payload: dict[str, Any] = {
     "template": psd_template_name(minister_count),
     "minister_count": minister_count,
     "layers": {
@@ -214,3 +215,6 @@ def build_test_flyer_json(*, force_upload: bool = False) -> dict[str, Any]:
       "Background": urls["background_image"],
     },
   }
+  if job_id:
+    payload["job_id"] = job_id
+  return payload

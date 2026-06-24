@@ -50,7 +50,16 @@ Matches the pattern used in Keji (`Procfile` + `gunicorn_config.py`), but **with
 - `DELETE /api/uploads/logos/<id>`
 - `POST /api/uploads/ministers` (multipart form-data `files`)
 - `DELETE /api/uploads/ministers/<id>`
-- `GET /api/test-flyer` — Photoshop UXP JSON: `template` (e.g. Template Min 1), `layers` matching PSD folders (Details, Event Name, Logo, Background, etc.) + Cloudinary URLs. `?refresh=1` re-uploads.
+- `GET /api/test-flyer` — Photoshop UXP JSON: `template` (e.g. Template Min 1), `layers` matching PSD folders (Details, Event Name, Logo, Background, etc.) + Cloudinary URLs. `?job_id=abc` links to export upload. `?refresh=1` re-uploads.
+- `POST /api/plugin/flyer-result` — **Photoshop UXP upload** finished flat PNG/JPEG/WebP (`multipart` field `file`). Returns `{ id, url, preview_page, ... }`. Share `preview_page` with the team.
+- `GET /api/plugin/flyer-result/latest` — latest export (JSON).
+- `GET /api/plugin/flyer-results` — recent exports list.
+- `GET /api/plugin/flyer-result/<id>` — fetch one export by id.
+- `GET /api/plugin/flyer-result/<id>/view` — redirect to image URL.
+- `GET /plugin/preview` — simple browser page (backend) to review uploads; auto-refreshes.
+- `GET /plugin/upload` — browser test form (same POST as Postman); use if Postman setup is awkward.
+
+**Team preview (frontend):** open `/plugin-preview` on the Vercel app (set `FRONTEND_ORIGIN` on Render so upload response includes that link).
 - `GET /api/ai/flyer/sample-payload` — prefilled flyer layers JSON (event details + base64 images) for Photoshop testing
 - `GET /api/ai/flyer/layers.zip` — ZIP for **Photoshop plugin**: background, logos, ministers, `manifest.json` (`ministerCount`, `templateBucket`, text). No template image — PSD lives in Photoshop.
 - `POST /api/ai/flyer/layers.zip` — same ZIP from a JSON body
