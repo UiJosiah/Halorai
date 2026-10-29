@@ -7,6 +7,11 @@ export type UploadedItem = {
 import { apiUrl } from "@/lib/config";
 import { log } from "@/lib/logger";
 
+export type BackendHealthResponse = {
+  ok: boolean;
+  time: string;
+};
+
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const started = performance.now();
   try {
@@ -57,6 +62,10 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
     });
     throw e;
   }
+}
+
+export async function fetchBackendHealth(): Promise<BackendHealthResponse> {
+  return await requestJson<BackendHealthResponse>(apiUrl("/api/health"), { cache: "no-store" });
 }
 
 export async function saveEventDetails(payload: unknown): Promise<{ id: string }> {
@@ -356,4 +365,3 @@ export async function aiFlyerInpaint(payload: {
 
   return await requestJson<AiFlyerResponse>(apiUrl("/api/ai/flyer/inpaint"), { method: "POST", body: fd });
 }
-

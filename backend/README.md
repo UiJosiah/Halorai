@@ -45,6 +45,7 @@ Matches the pattern used in Keji (`Procfile` + `gunicorn_config.py`), but **with
 ## Endpoints
 
 - `GET /api/health`
+- The frontend browser route `/health` calls `GET /api/health` and displays the backend response.
 - `POST /api/event-details` (JSON)
 - `POST /api/uploads/logos` (multipart form-data `files`, max 2)
 - `DELETE /api/uploads/logos/<id>`
@@ -65,4 +66,3 @@ Matches the pattern used in Keji (`Procfile` + `gunicorn_config.py`), but **with
 - `POST /api/ai/flyer/layers.zip` — same ZIP from a JSON body
 - `GET /api/ai/flyer/json` — demo flyer layers as JSON (base64)
 - `GET /uploads/<path>` serves uploaded files
-
